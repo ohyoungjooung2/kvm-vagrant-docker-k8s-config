@@ -7,3 +7,4 @@ then
 else
  echo -e "\e [33m $KEY ALREADY INSTALLED \e[0m "
 fi 
+sudo yum -y install telnet net-tools wget 
