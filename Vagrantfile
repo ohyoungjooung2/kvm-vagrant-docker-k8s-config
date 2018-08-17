@@ -13,13 +13,13 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
    kubemaster.vm.provision "shell", :path => "swapoff.sh"
    kubemaster.vm.provision "shell", :path => "k8s_docker_install.sh"
    kubemaster.vm.provision "shell", :path => "k8s_install.sh"
-   kubemaster.vm.provision "shell", :path => "kubeadm.sh"
+   kubemaster.vm.provision "shell", :path => "kubeadm-flannel.sh"
    kubemaster.vm.network "private_network", ip:"10.1.0.2"
    kubemaster.vm.host_name = "kubemaster"
      kubemaster.vm.provider :libvirt do |lv|
-      #Virtualbox
-      #vb.customize ["modifyvm", :id, "--memory", "2048"]
-      #vb.customize ["modifyvm", :id, "--cpus", "2"]
+      #Virtualvox
+      #lv.customize ["modifyvm", :id, "--memory", "2048"]
+      #lv.customize ["modifyvm", :id, "--cpus", "2"]
 
       #Libvirt
       lv.cpus = 2
@@ -36,8 +36,8 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
    kubeworker1.vm.provision "shell", :path => "admjoin.sh"
    kubeworker1.vm.network "private_network", ip:"10.1.0.3"
    kubeworker1.vm.host_name = "kubeworker1"
-     kubeworker1.vm.provider :libvirt do |vb|
-      vb.memory = 1024
+     kubeworker1.vm.provider :libvirt do |lv|
+      lv.memory = 1024
      end
    end
 
@@ -52,11 +52,26 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
    kubeworker2.vm.provision "shell", :path => "admjoin.sh"
    kubeworker2.vm.network "private_network", ip:"10.1.0.4"
    kubeworker2.vm.host_name = "kubeworker2"
-     kubeworker2.vm.provider :libvirt do |vb|
-      vb.memory = 1024
+     kubeworker2.vm.provider :libvirt do |lv|
+      lv.memory = 1024
      end
    end
 
+   config.vm.define "k8snfs" do |k8snfs|
+   k8snfs.vm.box = "centos/7"
+   #k8snfs.vm.provision "shell", inline: "cat /vagrant/pub_key >> /home/vagrant/.ssh/authorized_keys"
+   k8snfs.vm.provision "shell", path: "check_key.sh"
+   #k8snfs.vm.provision "shell", :path => "swapoff.sh"
+   #k8snfs.vm.provision "shell", :path => "k8s_docker_install.sh"
+   #k8snfs.vm.provision "shell", :path => "k8s_install.sh"
+   #k8snfs.vm.provision "shell", :path => "admjoin.sh"
+   k8snfs.vm.network "private_network", ip:"10.1.0.6"
+   k8snfs.vm.host_name = "k8snfs"
+     k8snfs.vm.provider :libvirt do |lv|
+      lv.memory = 1024
+      lv.storage :file, :size => '10G', :type => 'raw'
+     end
+   end
 #   config.vm.define "kubeworker3" do |kubeworker3|
 #   kubeworker3.vm.box = "centos/7"
 #   kubeworker3.vm.provision "shell", path: "check_key.sh"
@@ -65,8 +80,8 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 #   kubeworker3.vm.provision "shell", :path => "k8s_install.sh"
 #   kubeworker3.vm.network "private_network", ip:"10.1.0.5"
 #   kubeworker3.vm.host_name = "kubeworker3"
-#     kubeworker3.vm.provider :libvirt do |vb|
-#      vb.customize ["modifyvm", :id, "--memory", "1024"]
+#     kubeworker3.vm.provider :libvirt do |lv|
+#      lv.customize ["modifyvm", :id, "--memory", "1024"]
 #     end
 #   end
 end
