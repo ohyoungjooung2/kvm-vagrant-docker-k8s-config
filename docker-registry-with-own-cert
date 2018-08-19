@@ -1,0 +1,118 @@
+
+
+
+#Create key,crt
+[root@dockerlocalg ~]# cat oreq.sh 
+openssl req \
+  -newkey rsa:4096 -nodes -sha256 -keyout /certs/domain.key \
+  -x509 -days 365 -out /certs/domain.crt
+
+
+
+[root@dockerlocalg ~]# bash oreq.sh 
+Generating a 4096 bit RSA private key
+........++
+...................................................................................................................................................................................................................................++
+writing new private key to '/certs/domain.key'
+-----
+You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+-----
+Country Name (2 letter code) [XX]:Kr
+State or Province Name (full name) []:Seoul
+Locality Name (eg, city) [Default City]:Seoul
+Organization Name (eg, company) [Default Company Ltd]:F.inc
+Organizational Unit Name (eg, section) []:F.org
+Common Name (eg, your name or your server's hostname) []:10.1.0.7:5000
+Email Address []:
+
+
+#Adjust openssl.cnf.
+[root@dockerlocalg ~]# cat /etc/pki/tls/openssl.cnf 
+#-omitted--
+[ v3_ca ]
+
+subjectAltName=IP:10.1.0.7
+#omitted
+
+#Mkdir for ca.crt
+[root@dockerlocalg ~]# mkdir -p /etc/docker/certs.d/10.1.0.7\:5000
+[root@dockerlocalg ~]# cp /certs/domain.crt /etc/docker/certs.d/10.1.0.7\:5000/ca.crt 
+
+
+#Docker registry container start
+[root@dockerlocalg ~]# cat regi_docker.sh 
+#!/usr/bin/env bash
+#  -e REGISTRY_HTTP_ADDR=0.0.0.0:443 \
+docker run -d \
+  --restart=always \
+  --name registry \
+  -v /certs:/certs \
+  -v /regi:/var/lib/registry \
+  -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt \
+  -e REGISTRY_HTTP_TLS_KEY=/certs/domain.key \
+  -p 5000:5000 \
+  registry:2
+
+
+#Test
+[root@dockerlocalg ~]# docker pull ohyoungjooung2/tomcat9.0.10-on-alpinelinux38
+Using default tag: latest
+latest: Pulling from ohyoungjooung2/tomcat9.0.10-on-alpinelinux38
+8e3ba11ec2a2: Pull complete 
+5ff7fb08c2b4: Pull complete 
+27628e0a0b63: Pull complete 
+bd514ad2a5be: Pull complete 
+e4d6bfd7da2f: Pull complete 
+56f83caba94f: Pull complete 
+99ccc0a3d73e: Pull complete 
+Digest: sha256:47ac1af38cb51df023b079561776e5067e96efbc069cf8cfa256428f298b9c22
+Status: Downloaded newer image for ohyoungjooung2/tomcat9.0.10-on-alpinelinux38:latest
+
+
+[root@dockerlocalg ~]# docker images
+REPOSITORY                                     TAG                 IMAGE ID            CREATED             SIZE
+ohyoungjooung2/tomcat9.0.10-on-alpinelinux38   latest              828f122577cf        2 weeks ago         123 MB
+10.1.0.7:443/mybusybox                         latest              e1ddd7948a1c        2 weeks ago         1.16 MB
+10.1.0.7:5000/mbusybox                         latest              e1ddd7948a1c        2 weeks ago         1.16 MB
+busybox                                        latest              e1ddd7948a1c        2 weeks ago         1.16 MB
+registry                                       2                   b2b03e9146e1        6 weeks ago         33.3 MB
+[root@dockerlocalg ~]# docker tag 828f122577cf 10.1.0.7:5000/oyjtomcat9010alpinelinux38
+
+
+[root@dockerlocalg ~]# docker push 10.1.0.7:5000/oyjtomcat9010alpinelinux38
+The push refers to a repository [10.1.0.7:5000/oyjtomcat9010alpinelinux38]
+13a114eb7f66: Pushed 
+59368bda0938: Pushed 
+66163e896aa8: Pushed 
+14518fdd0f24: Pushed 
+d78a29c991b4: Pushed 
+4c5904eebc7d: Pushed 
+73046094a9b8: Pushed 
+latest: digest: sha256:ec9333e2b991177e58b4552d0adf1ee3e4b7dc05c63ae34add165ff876bfd6f4 size: 1790
+
+
+
+[root@dockerlocalg repositories]# cd /regi/docker/registry/v2/repositories/
+[root@dockerlocalg repositories]# ls
+mbusybox  oyjtomcat9010alpinelinux38  ubuntu
+
+
+
+#From other docker host, by coping ca.crt into /etc/certs.d/10.1.0.7:5000/ dir, we can pull this private images.
+
+[root@kubeworker2 docker]# mkdir certs.d
+[root@kubeworker2 docker]# cd certs.d/
+[root@kubeworker2 certs.d]# ls
+[root@kubeworker2 certs.d]# mkdir 10.1.0.7:5000
+#Terminal copy and paster, or whatever method ok as long as you can copy exact.
+[root@kubeworker2 certs.d]# vi 10.1.0.7\:5000/ca.crt
+
+
+
+
+
