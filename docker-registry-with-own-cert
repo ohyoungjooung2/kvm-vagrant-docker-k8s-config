@@ -1,4 +1,10 @@
+Creating docker registry server with your own certificate.
 
+#Referred sites.
+https://hackernoon.com/create-a-private-local-docker-registry-5c79ce912620
+https://github.com/docker/distribution/issues/948
+https://docs.docker.com/registry/deploying/#get-a-certificate
+https://docs.docker.com/registry/insecure/#use-self-signed-certificates
 
 
 #Create key,crt
