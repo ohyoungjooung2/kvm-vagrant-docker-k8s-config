@@ -57,6 +57,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
      end
    end
 
+   #Storage outside nfs server
    config.vm.define "k8snfs" do |k8snfs|
    k8snfs.vm.box = "centos/7"
    #k8snfs.vm.provision "shell", inline: "cat /vagrant/pub_key >> /home/vagrant/.ssh/authorized_keys"
@@ -72,6 +73,26 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
       lv.storage :file, :size => '10G', :type => 'raw'
      end
    end
+
+   
+   #docker local rigstry server
+   config.vm.define "dockerlocalg" do |dockerlocalg|
+   dockerlocalg.vm.box = "centos/7"
+   dockerlocalg.vm.provision "shell", path: "check_key.sh"
+   dockerlocalg.vm.provision "shell", :path => "k8s_docker_install.sh"
+   #dockerlocalg.vm.provision "shell", :path => "swapoff.sh"
+   #dockerlocalg.vm.provision "shell", :path => "k8s_install.sh"
+   #dockerlocalg.vm.provision "shell", :path => "admjoin.sh"
+   dockerlocalg.vm.network "private_network", ip:"10.1.0.7"
+   dockerlocalg.vm.host_name = "dockerlocalg"
+     dockerlocalg.vm.provider :libvirt do |lv|
+      lv.memory = 512
+      lv.storage :file, :size => '10G', :type => 'raw'
+     end
+   end
+
+
+
 #   config.vm.define "kubeworker3" do |kubeworker3|
 #   kubeworker3.vm.box = "centos/7"
 #   kubeworker3.vm.provision "shell", path: "check_key.sh"
