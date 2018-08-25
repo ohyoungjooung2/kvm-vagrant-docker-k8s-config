@@ -1,0 +1,73 @@
+#This docu explain how to add worker node on a cluster.
+[vagrant@kubemaster ~]$ kubeadm token create
+tfj754.wlscygdbg7bay497
+[vagrant@kubemaster ~]$ kubeadm token list
+TOKEN                     TTL       EXPIRES                USAGES                   DESCRIPTION   EXTRA GROUPS
+tfj754.wlscygdbg7bay497   23h       2018-08-26T10:06:48Z   authentication,signing   <none>        system:bootstrappers:kubeadm:default-node-token
+
+
+[vagrant@kubeworker3 ~]$ sudo -i
+[root@kubeworker3 ~]# kubeadm join --token tfj754.wlscygdbg7bay497 10.1.0.2:6443
+discovery: Invalid value: "": using token-based discovery without discoveryTokenCACertHashes can be unsafe. set --discovery-token-unsafe-skip-ca-verification to continue
+[root@kubeworker3 ~]# 
+
+
+
+[vagrant@kubemaster ~]$ openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | \
+>    openssl dgst -sha256 -hex | sed 's/^.* //'
+42e4571e6081c102d202ee6e3a2a2753a13f33ac1a463734fdff200cfb40d413
+[vagrant@kubemaster ~]$ 
+
+
+[root@kubeworker3 ~]# kubeadm join --token tfj754.wlscygdbg7bay497 10.1.0.2:6443 --discovery-token-ca-cert-hash sha256:42e4571e6081c102d202ee6e3a2a2753a13f33ac1a463734fdff200cfb40d413
+[preflight] running pre-flight checks
+	[WARNING RequiredIPVSKernelModulesAvailable]: the IPVS proxier will not be used, because the following required kernel modules are not loaded: [ip_vs ip_vs_rr ip_vs_wrr ip_vs_sh] or no builtin kernel ipvs support: map[ip_vs:{} ip_vs_rr:{} ip_vs_wrr:{} ip_vs_sh:{} nf_conntrack_ipv4:{}]
+you can solve this problem with following methods:
+ 1. Run 'modprobe -- ' to load missing kernel modules;
+2. Provide the missing builtin kernel ipvs support
+
+I0825 10:20:22.768168    4841 kernel_validator.go:81] Validating kernel version
+I0825 10:20:22.768442    4841 kernel_validator.go:96] Validating kernel config
+[discovery] Trying to connect to API Server "10.1.0.2:6443"
+[discovery] Created cluster-info discovery client, requesting info from "https://10.1.0.2:6443"
+[discovery] Requesting info from "https://10.1.0.2:6443" again to validate TLS against the pinned public key
+[discovery] Cluster info signature and contents are valid and TLS certificate validates against pinned roots, will use API Server "10.1.0.2:6443"
+[discovery] Successfully established connection with API Server "10.1.0.2:6443"
+[kubelet] Downloading configuration for the kubelet from the "kubelet-config-1.11" ConfigMap in the kube-system namespace
+[kubelet] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[kubelet] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
+[preflight] Activating the kubelet service
+[tlsbootstrap] Waiting for the kubelet to perform the TLS Bootstrap...
+[patchnode] Uploading the CRI Socket information "/var/run/dockershim.sock" to the Node API object "kubeworker3" as an annotation
+
+This node has joined the cluster:
+* Certificate signing request was sent to master and a response
+  was received.
+* The Kubelet was informed of the new secure connection details.
+
+Run 'kubectl get nodes' on the master to see this node join the cluster.
+
+
+[vagrant@kubemaster ~]$ kubectl get nodes
+NAME          STATUS     ROLES     AGE       VERSION
+kubemaster    Ready      master    12d       v1.11.2
+kubeworker1   Ready      <none>    12d       v1.11.2
+kubeworker2   Ready      <none>    12d       v1.11.2
+kubeworker3   NotReady   <none>    56s       v1.11.2
+
+
+
+
+
+[vagrant@kubemaster ~]$ kubectl get nodes
+NAME          STATUS    ROLES     AGE       VERSION
+kubemaster    Ready     master    12d       v1.11.2
+kubeworker1   Ready     <none>    12d       v1.11.2
+kubeworker2   Ready     <none>    12d       v1.11.2
+kubeworker3   Ready     <none>    2m        v1.11.2
+
+
+
+
+
+
