@@ -1,0 +1,329 @@
+Autoscaling kubernetes 1.11(network is flannel)
+
+
+
+When there is not metrics-server for k8s 1.11, auto scaling is not possible because kubectl cannot get metrics such
+as CPU or something like that.
+
+For example, 
+https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/
+
+
+vagrant@k8smaster kubernetes]$ kubectl get nodes
+NAME         STATUS    ROLES     AGE       VERSION
+k8smaster    Ready     master    2h        v1.11.2
+k8sworker1   Ready     <none>    2h        v1.11.2
+k8sworker2   Ready     <none>    2h        v1.11.2
+
+
+[vagrant@k8smaster kubernetes]$ kubectl run php-apache --image=k8s.gcr.io/hpa-example --requests=cpu=200m --expose --port=80
+service/php-apache created
+deployment.apps/php-apache created
+
+[vagrant@k8smaster kubernetes]$ kubectl get pods
+NAME                          READY     STATUS    RESTARTS   AGE
+php-apache-55b8c5f78f-8t8hb   1/1       Running   0          2m
+
+[vagrant@k8smaster kubernetes]$ kubectl autoscale deployment php-apache --cpu-percent=50 --min=1 --max=10
+horizontalpodautoscaler.autoscaling/php-apache autoscaled
+[vagrant@k8smaster kubernetes]$ kubectl get hpa
+NAME         REFERENCE               TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+php-apache   Deployment/php-apache   <unknown>/50%   1         10        0          4s
+
+#The cause is as follows.
+[vagrant@k8smaster kubernetes]$ kubectl get hpa
+NAME         REFERENCE               TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+php-apache   Deployment/php-apache   <unknown>/50%   1         10        0          4s
+[vagrant@k8smaster kubernetes]$ kubectl describe hpa php-apache
+Name:                                                  php-apache
+Namespace:                                             default
+Labels:                                                <none>
+Annotations:                                           <none>
+CreationTimestamp:                                     Thu, 30 Aug 2018 10:58:55 +0000
+Reference:                                             Deployment/php-apache
+Metrics:                                               ( current / target )
+  resource cpu on pods  (as a percentage of request):  <unknown> / 50%
+Min replicas:                                          1
+Max replicas:                                          10
+Deployment pods:                                       1 current / 0 desired
+Conditions:
+  Type           Status  Reason                   Message
+  ----           ------  ------                   -------
+  AbleToScale    True    SucceededGetScale        the HPA controller was able to get the target's current scale
+  ScalingActive  False   FailedGetResourceMetric  the HPA was unable to compute the replica count: unable to get metrics for resource cpu: unable to fetch metrics from resource metrics API: the server could not find the requested resource (get pods.metrics.k8s.io)
+Events:
+  Type     Reason                        Age              From                       Message
+  ----     ------                        ----             ----                       -------
+  Warning  FailedGetResourceMetric       8s (x7 over 3m)  horizontal-pod-autoscaler  unable to get metrics for resource cpu: unable to fetch metrics from resource metrics API: the server could not find the requested resource (get pods.metrics.k8s.io)
+  Warning  FailedComputeMetricsReplicas  8s (x7 over 3m)  horizontal-pod-autoscaler  failed to get cpu utilization: unable to get metrics for resource cpu: unable to fetch metrics from resource metrics API: the server could not find the requested resource (get pods.metrics.k8s.io)
+
+
+Above should be like below.
+
+[vagrant@kubemaster ~]$ kubectl get hpa
+NAME         REFERENCE               TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+php-apache   Deployment/php-apache   0%/50%    1         10        1          13m
+
+
+
+
+
+And below command do not get results .
+
+[vagrant@k8smaster kubernetes]$ kubectl top nodes
+Error from server (NotFound): the server could not find the requested resource (get services http:heapster:)
+[vagrant@k8smaster kubernetes]$ kubectl top pod
+Error from server (NotFound): the server could not find the requested resource (get services http:heapster:)
+[vagrant@k8smaster kubernetes]$ kubectl top pod
+Error from server (NotFound): the server could not find the requested resource (get services http:heapster:)
+[vagrant@k8smaster kubernetes]$ 
+
+
+
+*After lots of search and test, I cloud config correct as follows.
+1.Create CA,cert,key for aggregator.(https://github.com/kubernetes/sample-apiserver/blob/master/README.md)
+
+[[vagrant@k8smaster certi]$ openssl req -nodes -new -x509 -keyout ca.key -out aggre-ca.crt
+Generating a 2048 bit RSA private key
+.........................................................................+++
+...................+++
+writing new private key to 'ca.key'
+-----
+You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+-----
+Country Name (2 letter code) [XX]:KR
+State or Province Name (full name) []:Seoul
+Locality Name (eg, city) [Default City]:BigSeoul
+Organization Name (eg, company) [Default Company Ltd]:DreamCom.co
+Organizational Unit Name (eg, section) []:DreamCom.co.corea
+Common Name (eg, your name or your server's hostname) []:DreamCom.co.corea
+Email Address []:
+
+[vagrant@k8smaster certi]$ openssl req -out client.csr -new -newkey rsa:4096 -nodes -keyout client.key -subj "/CN=aggregator/O=kube-system:masters"
+Generating a 4096 bit RSA private key
+.......................................................................................++
+.............................................................................................................................................................................................................................................++
+writing new private key to 'client.key'
+-----
+
+[vagrant@k8smaster certi]$ openssl x509 -req -days 1000000 -in client.csr -CA aggre-ca.crt -CAkey ca.key -set_serial 01 -out aggre-client.crt
+Signature ok
+subject=/CN=aggregator/O=kube-system:masters
+Getting CA Private Key
+[vagrant@k8smaster certi]$ ls
+aggre-ca.crt  aggre-client.crt  ca.key  client.csr  client.key
+
+[vagrant@k8smaster certi]$ ls
+aggre-ca.crt  aggre-client.crt  ca.key  client.csr  client.key
+[vagrant@k8smaster certi]$ mv client.key aggre-client.key
+[vagrant@k8smaster certi]$ sudo cp aggre-c* /etc/kubernetes/pki/
+[vagrant@k8smaster certi]$ 
+
+
+2. Configure aggregation layer.
+https://kubernetes.io/docs/tasks/access-kubernetes-api/configure-aggregation-layer/
+[vagrant@k8smaster certi]$ sudo vi --cmd "set nu" /etc/kubernetes/manifests/kube-apiserver.yaml 
+#From 31 to 34 changed from front-proxy to aggre-* keys that I generated.
+
+  31     - --proxy-client-cert-file=/etc/kubernetes/pki/front-proxy-client.crt
+     32     - --proxy-client-key-file=/etc/kubernetes/pki/front-proxy-client.key
+     33     - --requestheader-allowed-names=front-proxy-client
+     34     - --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt
+     35     - --requestheader-extra-headers-prefix=X-Remote-Extra-
+     36     - --requestheader-group-headers=X-Remote-Group
+     37     - --requestheader-username-headers=X-Remote-User
+
+
+ 31     - --proxy-client-cert-file=/etc/kubernetes/pki/aggre-client.crt
+     32     - --proxy-client-key-file=/etc/kubernetes/pki/aggre-client.key
+     33     - --requestheader-allowed-names=aggregator
+     34     - --requestheader-client-ca-file=/etc/kubernetes/pki/aggre-ca.crt
+     35     - --requestheader-extra-headers-prefix=X-Remote-Extra-
+     36     - --requestheader-group-headers=X-Remote-Group
+     37     - --requestheader-username-headers=X-Remote-User
+
+#Check cluster. Automatically reconfigured. Seems like very dangerous that we should not do in production.
+#This should set before pods are deployed in production of course.
+[vagrant@k8smaster certi]$ kubectl get nodes
+The connection to the server 10.3.0.2:6443 was refused - did you specify the right host or port?
+[vagrant@k8smaster certi]$ kubectl get nodes
+The connection to the server 10.3.0.2:6443 was refused - did you specify the right host or port?
+[vagrant@k8smaster certi]$ watch kubectl get nodes
+[vagrant@k8smaster certi]$ kubectl get nodes
+NAME         STATUS    ROLES     AGE       VERSION
+k8smaster    Ready     master    3h        v1.11.2
+k8sworker1   Ready     <none>    2h        v1.11.2
+k8sworker2   Ready     <none>    2h        v1.11.2
+[vagrant@k8smaster certi]$ kubectl get pods --all-namespaces
+NAMESPACE     NAME                                READY     STATUS    RESTARTS   AGE
+default       php-apache-55b8c5f78f-8t8hb         1/1       Running   0          31m
+kube-system   coredns-78fcdf6894-6z65j            1/1       Running   0          3h
+kube-system   coredns-78fcdf6894-l7nsd            1/1       Running   0          3h
+kube-system   etcd-k8smaster                      1/1       Running   0          3h
+kube-system   kube-apiserver-k8smaster            1/1       Running   1          46s
+kube-system   kube-controller-manager-k8smaster   1/1       Running   2          3h
+kube-system   kube-flannel-ds-6pc4r               1/1       Running   0          3h
+kube-system   kube-flannel-ds-ltlt8               1/1       Running   0          2h
+kube-system   kube-flannel-ds-qbwst               1/1       Running   0          2h
+kube-system   kube-proxy-6p2nt                    1/1       Running   0          2h
+kube-system   kube-proxy-jtmvx                    1/1       Running   0          2h
+kube-system   kube-proxy-zlc9b                    1/1       Running   0          3h
+kube-system   kube-scheduler-k8smaster            1/1       Running   2          3h
+
+
+3. Get metrics server and edit something that is important.
+[vagrant@k8smaster ~]$ sudo yum -y install git
+
+[vagrant@k8smaster ~]$ git clone https://github.com/kubernetes-incubator/metrics-server.git
+Cloning into 'metrics-server'...
+remote: Counting objects: 9479, done.
+remote: Compressing objects: 100% (67/67), done.
+remote: Total 9479 (delta 39), reused 56 (delta 13), pack-reused 9385
+Receiving objects: 100% (9479/9479), 11.22 MiB | 842.00 KiB/s, done.
+Resolving deltas: 100% (4763/4763), done.
+
+[vagrant@k8smaster ~]$ vi --cmd "set nu" metrics-server/deploy/1.8+/metrics-server-deployment.yaml 
+#Insert 
+"34         command:
+ 35         - /metrics-server
+ 36         - --source=kubernetes.summary_api:https://kubernetes.default?kubeletHttps=true&kubeletPort=10250&insecure=true
+FROM
+ 32         image: gcr.io/google_containers/metrics-server-amd64:v0.2.1
+     33         imagePullPolicy: Always
+     34         volumeMounts:
+     35         - name: tmp-dir
+     36           mountPath: /tmp
+
+TO
+ 
+
+
+32         image: gcr.io/google_containers/metrics-server-amd64:v0.2.1
+     33         imagePullPolicy: Always
+      34         command:
+     35         - /metrics-server
+     36         - --source=kubernetes.summary_api:https://kubernetes.default?kubeletHttps=true&kubeletPort=10250&insecure=true
+     37         volumeMounts:
+     38         - name: tmp-dir
+     39           mountPath: /tmp
+
+
+
+[vagrant@k8smaster ~]$ kubectl create -f metrics-server/deploy/1.8+/
+clusterrolebinding.rbac.authorization.k8s.io/metrics-server:system:auth-delegator created
+rolebinding.rbac.authorization.k8s.io/metrics-server-auth-reader created
+apiservice.apiregistration.k8s.io/v1beta1.metrics.k8s.io created
+serviceaccount/metrics-server created
+deployment.extensions/metrics-server created
+service/metrics-server created
+clusterrole.rbac.authorization.k8s.io/system:metrics-server created
+clusterrolebinding.rbac.authorization.k8s.io/system:metrics-server created
+
+#Well running very OK!.
+[vagrant@k8smaster ~]$ kubectl get pods -n kube-system | grep metrics
+metrics-server-778ddc45b5-k26w8     1/1       Running   0          1m
+
+
+[vagrant@k8smaster ~]$ kubectl logs metrics-server-778ddc45b5-k26w8 -n kube-system
+I0830 11:47:44.699992       1 heapster.go:71] /metrics-server --source=kubernetes.summary_api:https://kubernetes.default?kubeletHttps=true&kubeletPort=10250&insecure=true
+I0830 11:47:44.700218       1 heapster.go:72] Metrics Server version v0.2.1
+I0830 11:47:44.700617       1 configs.go:61] Using Kubernetes client with master "https://kubernetes.default" and version 
+I0830 11:47:44.700648       1 configs.go:62] Using kubelet port 10250
+I0830 11:47:44.701419       1 heapster.go:128] Starting with Metric Sink
+I0830 11:47:45.170175       1 serving.go:308] Generated self-signed cert (apiserver.local.config/certificates/apiserver.crt, apiserver.local.config/certificates/apiserver.key)
+I0830 11:47:45.361504       1 heapster.go:101] Starting Heapster API server...
+[restful] 2018/08/30 11:47:45 log.go:33: [restful/swagger] listing is available at https:///swaggerapi
+[restful] 2018/08/30 11:47:45 log.go:33: [restful/swagger] https:///swaggerui/ is mapped to folder /swagger-ui/
+I0830 11:47:45.363878       1 serve.go:85] Serving securely on 0.0.0.0:443
+I0830 11:48:08.583401       1 reststorage.go:93] No metrics for pod default/php-apache-55b8c5f78f-8t8hb
+I0830 11:48:38.626395       1 reststorage.go:93] No metrics for pod default/php-apache-55b8c5f78f-8t8hb
+
+
+#Well this is very successful.
+[vagrant@k8smaster ~]$ kubectl top pod
+NAME                          CPU(cores)   MEMORY(bytes)   
+php-apache-55b8c5f78f-8t8hb   0m           8Mi             
+[vagrant@k8smaster ~]$ kubectl top node
+NAME         CPU(cores)   CPU%      MEMORY(bytes)   MEMORY%   
+k8smaster    284m         14%       1156Mi          66%       
+k8sworker1   49m          4%        454Mi           51%       
+k8sworker2   48m          4%        276Mi           31%       
+
+
+***************************************When not set command lines **************************************************
+[vagrant@k8smaster ~]$ kubectl create -f metrics-server/deploy/1.8+/
+clusterrolebinding.rbac.authorization.k8s.io/metrics-server:system:auth-delegator created
+rolebinding.rbac.authorization.k8s.io/metrics-server-auth-reader created
+apiservice.apiregistration.k8s.io/v1beta1.metrics.k8s.io created
+serviceaccount/metrics-server created
+deployment.extensions/metrics-server created
+service/metrics-server created
+clusterrole.rbac.authorization.k8s.io/system:metrics-server created
+clusterrolebinding.rbac.authorization.k8s.io/system:metrics-server created
+
+[vagrant@k8smaster ~]$ kubectl get pods -n kube-system | grep metrics
+metrics-server-778ddc45b5-k26w8     1/1       Running   0          1m
+
+
+
+[vagrant@k8smaster ~]$ kubectl -n kube-system get pods
+NAME                                READY     STATUS    RESTARTS   AGE
+coredns-78fcdf6894-6z65j            1/1       Running   0          3h
+coredns-78fcdf6894-l7nsd            1/1       Running   0          3h
+etcd-k8smaster                      1/1       Running   0          3h
+kube-apiserver-k8smaster            1/1       Running   1          10m
+kube-controller-manager-k8smaster   1/1       Running   2          3h
+kube-flannel-ds-6pc4r               1/1       Running   0          3h
+kube-flannel-ds-ltlt8               1/1       Running   0          3h
+kube-flannel-ds-qbwst               1/1       Running   0          3h
+kube-proxy-6p2nt                    1/1       Running   0          3h
+kube-proxy-jtmvx                    1/1       Running   0          3h
+kube-proxy-zlc9b                    1/1       Running   0          3h
+kube-scheduler-k8smaster            1/1       Running   2          3h
+metrics-server-f5bc46bd7-xqg4w      0/1       Error     2          48s
+[vagrant@k8smaster ~]$ kubectl logs metrics-server-f5bc46bd7-xqg4w -n kube-system
+I0830 11:37:08.669948       1 heapster.go:71] /metrics-server
+I0830 11:37:08.670139       1 heapster.go:72] Metrics Server version v0.2.1
+F0830 11:37:08.670152       1 heapster.go:79] Failed to get kubernetes address: No kubernetes source found.
+[vagrant@k8smaster ~]$ 
+[vagrant@k8smaster ~]$ kubectl delete -f metrics-server/deploy/1.8+/
+clusterrolebinding.rbac.authorization.k8s.io "metrics-server:system:auth-delegator" deleted
+rolebinding.rbac.authorization.k8s.io "metrics-server-auth-reader" deleted
+apiservice.apiregistration.k8s.io "v1beta1.metrics.k8s.io" deleted
+serviceaccount "metrics-server" deleted
+deployment.extensions "metrics-server" deleted
+service "metrics-server" deleted
+clusterrole.rbac.authorization.k8s.io "system:metrics-server" deleted
+clusterrolebinding.rbac.authorization.k8s.io "system:metrics-server" deleted
+
+****************************************************************************************************************
+
+
+
+4. Let's c autoscale https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/
+
+[vagrant@k8smaster ~]$ kubectl get pods
+NAME                          READY     STATUS    RESTARTS   AGE
+php-apache-55b8c5f78f-8t8hb   1/1       Running   0          56m
+[vagrant@k8smaster ~]$ kubectl get deploy
+NAME         DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+php-apache   1         1         1            1           57m
+[vagrant@k8smaster ~]$ kubectl get svc
+NAME         TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)   AGE
+kubernetes   ClusterIP   10.96.0.1        <none>        443/TCP   3h
+php-apache   ClusterIP   10.102.195.192   <none>        80/TCP    57m
+
+
+#It is normal from "unknown" to "0%"
+[vagrant@k8smaster ~]$ kubectl get hpa
+NAME         REFERENCE               TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+php-apache   Deployment/php-apache   0%/50%    1         10        1          54m
+
+
+
+
