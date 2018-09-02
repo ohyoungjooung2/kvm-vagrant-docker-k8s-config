@@ -67,6 +67,9 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
    #k8snfs.vm.provision "shell", :path => "k8s_install.sh"
    #k8snfs.vm.provision "shell", :path => "admjoin.sh"
    k8snfs.vm.network "private_network", ip:"10.1.0.6"
+   k8snfs.vm.provision "ansible" do |ansible|
+      ansible.playbook = "nfs_install.yml"
+   end
    k8snfs.vm.host_name = "k8snfs"
      k8snfs.vm.provider :libvirt do |lv|
       lv.memory = 1024
@@ -93,16 +96,16 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 
 
 
-#   config.vm.define "kubeworker3" do |kubeworker3|
-#   kubeworker3.vm.box = "centos/7"
-#   kubeworker3.vm.provision "shell", path: "check_key.sh"
-#   kubeworker3.vm.provision "shell", :path => "swapoff.sh"
-#   kubeworker3.vm.provision "shell", :path => "k8s_docker_install.sh"
-#   kubeworker3.vm.provision "shell", :path => "k8s_install.sh"
-#   kubeworker3.vm.network "private_network", ip:"10.1.0.5"
-#   kubeworker3.vm.host_name = "kubeworker3"
-#     kubeworker3.vm.provider :libvirt do |lv|
-#      lv.customize ["modifyvm", :id, "--memory", "1024"]
-#     end
-#   end
+   config.vm.define "kubeworker3" do |kubeworker3|
+   kubeworker3.vm.box = "centos/7"
+   kubeworker3.vm.provision "shell", path: "check_key.sh"
+   kubeworker3.vm.provision "shell", :path => "swapoff.sh"
+   kubeworker3.vm.provision "shell", :path => "k8s_docker_install.sh"
+   kubeworker3.vm.provision "shell", :path => "k8s_install.sh"
+   kubeworker3.vm.network "private_network", ip:"10.1.0.5"
+   kubeworker3.vm.host_name = "kubeworker3"
+     kubeworker3.vm.provider :libvirt do |lv|
+      lv.memory = 512
+     end
+   end
 end
