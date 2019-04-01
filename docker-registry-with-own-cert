@@ -109,7 +109,7 @@ mbusybox  oyjtomcat9010alpinelinux38  ubuntu
 
 
 
-#From other docker host, by coping ca.crt into /etc/certs.d/10.1.0.7:5000/ dir, we can pull this private images.
+#From other docker host, by coping ca.crt into /etc/docker/certs.d/10.1.0.7:5000/ dir, we can pull this private images.
 
 [root@kubeworker2 docker]# mkdir certs.d
 [root@kubeworker2 docker]# cd certs.d/
