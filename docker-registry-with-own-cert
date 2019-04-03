@@ -117,8 +117,3 @@ mbusybox  oyjtomcat9010alpinelinux38  ubuntu
 [root@kubeworker2 certs.d]# mkdir 10.1.0.7:5000
 #Terminal copy and paster, or whatever method ok as long as you can copy exact.
 [root@kubeworker2 certs.d]# vi 10.1.0.7\:5000/ca.crt
-
-
-
-
-
