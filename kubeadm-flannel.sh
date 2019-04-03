@@ -81,7 +81,8 @@ kubeadm_pod_network_kube_router(){
 
 kubeadm_pod_network_flannel(){
   echo -e "\e[36m flannel pod apply \e[0m"
-  sudo su - vagrant -c "kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/v0.10.0/Documentation/kube-flannel.yml"
+  #sudo su - vagrant -c "kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/v0.10.0/Documentation/kube-flannel.yml"
+  sudo su - vagrant -c "kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/a70459be0084506e4ec919aa1c114638878db11b/Documentation/kube-flannel.yml"
   echo -e "\e[36m kubectl get pods --all-namespaces \e[0m"
   sleep 30
   sudo su - vagrant -c "kubectl get pods --all-namespaces"

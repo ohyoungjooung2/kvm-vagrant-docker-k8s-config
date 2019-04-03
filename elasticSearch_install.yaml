@@ -1,0 +1,100 @@
+---
+- hosts: all
+  gather_facts: no
+
+  vars:
+    JAVA_HOME: /opt/java/jdk1.8.0_131
+
+  become: yes
+  tasks:
+
+
+  - name: download elasticsearch-6.6.1.rpm.sha512
+    get_url:
+      url: https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-6.6.1.rpm.sha512
+      dest: /tmp/elasticsearch-6.6.1.rpm.sha512
+
+  - name: open elasticsearch-6.6.1.rpm.sha512 file and register
+    raw: cat /tmp/elasticsearch-6.6.1.rpm.sha512
+    register: e661_sha512 
+
+  - debug:
+      var: e661_sha512.stdout.split()[0]
+
+  - name: download elasticsearch 6.6.1
+    get_url:
+      url: https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-6.6.1.rpm
+      dest: /tmp/elasticsearch-6.6.1.rpm
+      
+  - name: open elasticsearch-6.6.1.rpm.sha512 file and register
+    raw:  sha512sum /tmp/elasticsearch-6.6.1.rpm
+    register: e661_rpm_sha512
+
+  - debug: 
+      var: e661_rpm_sha512.stdout.split()[0] 
+
+  - name: check elasticsearch661 installed or not
+    shell: rpm -qa | grep elasticsearch
+    register: installed_elasticsearch
+    ignore_errors: True
+    no_log: True
+ 
+  - debug:
+      var: installed_elasticsearch
+      #- meta: end_play
+
+  - name: install elasticsearch 6.6.1
+    shell: "export JAVA_HOME={{ JAVA_HOME }};rpm -Uvh /tmp/elasticsearch-6.6.1.rpm"
+    when: (e661_sha512.stdout.split()[0] ==  e661_rpm_sha512.stdout.split()[0]) and (installed_elasticsearch.rc != 0)  
+
+  - name: java link to /usr/sbin/java
+    file:
+      src: "{{ JAVA_HOME }}/bin/java"
+      dest: /usr/sbin/java
+      state: link
+
+
+  - name: start elasticsearch
+    shell: systemctl start elasticsearch
+    register: start_elasrch
+
+  - debug:
+      var: start_elasrch
+
+#  - name: install elasticsearch 6.6
+#    yum:
+#      name: https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-6.6.1.rpm
+#      state: present
+
+#  - name: import elasticsearch gpg key for rpm
+#    rpm_key:
+#      state: present
+#      key: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+
+
+
+
+
+
+
+#  - name: Add repository
+#    yum_repository:
+#      name: elasticsearch-6.x
+#      description: Elasticsearch repository for 6.x packages
+#      baseurl: https://artifacts.elastic.co/packages/oss-6.x/yum
+#      gpgcheck: yes
+#      gpgkey: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+#      enabled: 1
+#      #type: rpm-md
+#
+#
+#      #- name: elasticserach 6.x install
+#
+##    [elasticsearch-6.x]
+##name=Elasticsearch repository for 6.x packages
+##baseurl=https://artifacts.elastic.co/packages/6.x/yum
+##gpgcheck=1
+##gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+##enabled=1
+##autorefresh=1
+##type=rpm-md
