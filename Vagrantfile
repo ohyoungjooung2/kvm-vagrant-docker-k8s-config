@@ -8,7 +8,7 @@ VAGRANTFILE_API_VERSION = "2"
 Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
    
    #config.vm.synced_folder ".","/vagrant",type:"basic"
-   config.vm.define "kubemaster" do |kubemaster|
+   config.vm.define "kubemaster", primary: true do |kubemaster|
    kubemaster.vm.box = "centos/7"
    kubemaster.vm.provision "shell", path: "check_key.sh"
    kubemaster.vm.provision "shell", :path => "swapoff.sh"
