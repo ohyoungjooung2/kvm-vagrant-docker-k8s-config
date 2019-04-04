@@ -189,6 +189,19 @@ latest: digest: sha256:7960d188ec3d29b3427261b895ec194b10ff025f4a3affe9b7f27098b
 
 
 
-
+#Other examples.
+[vagrant@kubemaster ~]$ docker login 10.1.0.7:5000
+Username: testuser
+Password: 
+Login Succeeded
+[vagrant@kubemaster ~]$ docker pull 10.1.0.7:5000/actuator-sample
+Using default tag: latest
+latest: Pulling from actuator-sample
+53478ce18e19: Already exists 
+d1c225ed7c34: Already exists 
+887f300163b6: Already exists 
+3166af2a2aa8: Pull complete 
+Digest: sha256:7960d188ec3d29b3427261b895ec194b10ff025f4a3affe9b7f27098bd2aa796
+Status: Downloaded newer image for 10.1.0.7:5000/actuator-sample:latest
 
 
