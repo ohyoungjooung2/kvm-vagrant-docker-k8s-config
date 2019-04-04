@@ -117,3 +117,78 @@ mbusybox  oyjtomcat9010alpinelinux38  ubuntu
 [root@kubeworker2 certs.d]# mkdir 10.1.0.7:5000
 #Terminal copy and paster, or whatever method ok as long as you can copy exact.
 [root@kubeworker2 certs.d]# vi 10.1.0.7\:5000/ca.crt
+
+#login register.
+#When we want to limit access, using htpasswd is the one .
+
+user$ docker run --entrypoint htpasswd registry:2 -Bbn testuser testpassword > auth/htpasswd
+$ docker container stop registry
+$docker container rm registry:2
+
+[vagrant@dockerlocalg ~]$ cat auth_regi_docker.sh 
+#!/usr/bin/env bash
+sudo docker run -d \
+  -p 5000:5000 \
+  --restart=always \
+  --name registry \
+  -v "$(pwd)"/auth:/auth \
+  -e "REGISTRY_AUTH=htpasswd" \
+  -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+  -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+  -v /certs:/certs \
+  -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt \
+  -e REGISTRY_HTTP_TLS_KEY=/certs/domain.key \
+  registry:2
+
+
+[vagrant@dockerlocalg ~]$ bash auth_regi_docker.sh 
+69d30d12523e70410a941895223cf329c621afcda375a64ec51d40173caa9a27
+[vagrant@dockerlocalg ~]$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                    NAMES
+69d30d12523e        registry:2          "/entrypoint.sh /e..."   3 seconds ago       Up 1 second         0.0.0.0:5000->5000/tcp   registry
+[vagrant@dockerlocalg ~]$ telnet localhost 5000
+Trying ::1...
+Connected to localhost.
+Escape character is '^]'.
+
+
+[vagrant@dockerlocalg ~]$ docker login 10.1.0.7:5000
+Username: testuser
+Password: 
+Login Succeeded
+[vagrant@dockerlocalg ~]$ 
+
+
+oyj@Workstation-oyj-X555QG ~$docker push 10.1.0.7:5000/actuator-sample
+The push refers to repository [10.1.0.7:5000/actuator-sample]
+ba0eca557078: Preparing 
+a1e7033f082e: Preparing 
+78075328e0da: Preparing 
+9f8566ee5135: Preparing 
+unauthorized: authentication required
+
+oyj@Workstation-oyj-X555QG ~$docker login 10.1.0.7:5000
+Authenticating with existing credentials...
+Login did not succeed, error: Error response from daemon: login attempt to https://10.1.0.7:5000/v2/ failed with status: 401 Unauthorized
+Username (test): testuser
+Password: 
+WARNING! Your password will be stored unencrypted in /home/oyj/.docker/config.json.
+Configure a credential helper to remove this warning. See
+https://docs.docker.com/engine/reference/commandline/login/#credentials-store
+
+oyj@Workstation-oyj-X555QG ~$docker push 10.1.0.7:5000/actuator-sample
+The push refers to repository [10.1.0.7:5000/actuator-sample]
+ba0eca557078: Pushed 
+a1e7033f082e: Pushed 
+78075328e0da: Pushed 
+9f8566ee5135: Pushed 
+latest: digest: sha256:7960d188ec3d29b3427261b895ec194b10ff025f4a3affe9b7f27098bd2aa796 size: 1159
+
+
+!Good!
+
+
+
+
+
+
