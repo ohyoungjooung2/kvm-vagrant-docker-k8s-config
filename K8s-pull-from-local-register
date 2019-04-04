@@ -1,0 +1,183 @@
+https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+
+
+I had studied before https://github.com/ohyoungjooung2/kvm-vagrant-docker-k8s-config/blob/master/docker-registry-with-own-cert
+to adjust above url's contents.
+
+
+
+[vagrant@kubemaster gitlab]$ kubectl delete secret regcred
+secret "regcred" deleted
+[vagrant@kubemaster gitlab]$ kubectl create secret docker-registry regcred --docker-server=10.1.0.7:5000 --docker-username=testuser --docker-password=testpassword
+secret/regcred created
+[vagrant@kubemaster gitlab]$ kubectl describe secrets/regcred
+Name:         regcred
+Namespace:    default
+Labels:       <none>
+Annotations:  <none>
+
+Type:  kubernetes.io/dockerconfigjson
+
+Data
+====
+.dockerconfigjson:  115 bytes
+
+
+
+[vagrant@kubemaster gitlab]$ kubectl get secret regcred --output=yaml
+apiVersion: v1
+data:
+  .dockerconfigjson: eyJhdXRocyI6eyIxMC4xLjAuNzo1MDAwIjp7InVzZXJuYW1lIjoidGVzdHVzZXIiLCJwYXNzd29yZCI6InRlc3RwYXNzd29yZCIsImF1dGgiOiJkR1Z6ZEhWelpYSTZkR1Z6ZEhCaGMzTjNiM0prIn19fQ==
+kind: Secret
+metadata:
+  creationTimestamp: 2019-04-04T09:49:45Z
+  name: regcred
+  namespace: default
+  resourceVersion: "3221630"
+  selfLink: /api/v1/namespaces/default/secrets/regcred
+  uid: fa5a9800-56be-11e9-b2cf-525400366235
+type: kubernetes.io/dockerconfigjson
+[vagrant@kubemaster gitlab]$ kubectl get secret regcred --output="jsonpath={.data.\.dockerconfigjson}" | base64 --decode
+{"auths":{"10.1.0.7:5000":{"username":"testuser","password":"testpassword","auth":"dGVzdHVzZXI6dGVzdHBhc3N3b3Jk"}}}[vagrant@kubemaster gitlab]$ 
+
+
+!!!!Well, every cluster node should have certificates.!!!!!
+If not, below error will occur.
+
+[vagrant@kubemaster gitlab]$ kubectl apply -f test.yaml 
+pod/private-reg created
+[vagrant@kubemaster gitlab]$ kubectl get pods
+NAME          READY     STATUS              RESTARTS   AGE
+private-reg   0/1       ContainerCreating   0          4s
+[vagrant@kubemaster gitlab]$ kubectl describe pods
+Name:               private-reg
+
+Volumes:
+  default-token-vmt7l:
+    Type:        Secret (a volume populated by a Secret)
+    SecretName:  default-token-vmt7l
+    Optional:    false
+QoS Class:       Burstable
+Node-Selectors:  <none>
+Tolerations:     node.kubernetes.io/not-ready:NoExecute for 300s
+                 node.kubernetes.io/unreachable:NoExecute for 300s
+Events:
+  Type     Reason          Age   From                  Message
+  ----     ------          ----  ----                  -------
+  Normal   Scheduled       12s   default-scheduler     Successfully assigned default/private-reg to kubeworker2
+  Normal   Pulling         1s    kubelet, kubeworker2  pulling image "10.1.0.7:5000/actuator-sample"
+  Warning  Failed          1s    kubelet, kubeworker2  Failed to pull image "10.1.0.7:5000/actuator-sample": rpc error: code = Unknown desc = Error response from daemon: Get https://10.1.0.7:5000/v1/_ping: x509: certificate signed by unknown authority (possibly because of "crypto/rsa: verification error" while trying to verify candidate authority certificate "10.1.0.7:5000")
+  Warning  Failed          1s    kubelet, kubeworker2  Error: ErrImagePull
+  Normal   SandboxChanged  1s    kubelet, kubeworker2  Pod sandbox changed, it will be killed and re-created.
+
+
+
+[root@kubemaster vagrant]# ssh vagrant@kubeworker1 'sudo mkdir -p /etc/docker/certs.d/10.1.0.7:5000/'
+vagrant@kubeworker1's password: 
+
+[root@kubemaster vagrant]# ssh vagrant@kubeworker2 'sudo mkdir -p /etc/docker/certs.d/10.1.0.7:5000/'
+vagrant@kubeworker2's password: 
+
+
+[root@kubemaster vagrant]# scp /etc/docker/certs.d/10.1.0.7\:5000/ca.crt vagrant@kubeworker1:/home/vagrant/
+vagrant@kubeworker1's password: 
+ca.crt                                                                                                                                    100% 2029   619.1KB/s   00:00    
+[root@kubemaster vagrant]# scp /etc/docker/certs.d/10.1.0.7\:5000/ca.crt vagrant@kubeworker2:/home/vagrant/
+vagrant@kubeworker2's password: 
+ca.crt                                                                                                                                    100% 2029   942.8KB/s   00:00    
+
+[vagrant@kubemaster ~]$ kubectl get nodes
+NAME          STATUS    ROLES     AGE       VERSION
+kubemaster    Ready     master    234d      v1.12.3
+kubeworker1   Ready     <none>    234d      v1.12.3
+kubeworker2   Ready     <none>    234d      v1.12.3
+
+
+
+[root@kubemaster ~]# ssh vagrant@kubeworker2 'sudo cp /home/vagrant/ca.crt //etc/docker/certs.d/10.1.0.7\:5000/'
+vagrant@kubeworker2's password: 
+[root@kubemaster ~]# set -o vi
+[root@kubemaster ~]# ssh vagrant@kubeworker1 'sudo cp /home/vagrant/ca.crt //etc/docker/certs.d/10.1.0.7\:5000/'
+vagrant@kubeworker1's password: 
+
+
+
+[vagrant@kubemaster gitlab]$ cat test.yaml 
+apiVersion: v1
+kind: Pod
+metadata:
+  name: private-reg
+spec:
+  containers:
+  - name: private-reg-container
+    image: 10.1.0.7:5000/actuator-sample
+  imagePullSecrets:
+  - name: regcred
+
+
+
+[vagrant@kubemaster gitlab]$ kubectl create -f test.yaml 
+
+[vagrant@kubemaster gitlab]$ kubectl create -f test.yaml 
+pod/private-reg created
+
+
+[vagrant@kubemaster gitlab]$ kubectl describe pod private-reg
+Name:               private-reg
+Namespace:          default
+Priority:           0
+PriorityClassName:  <none>
+Node:               kubeworker2/192.168.121.58
+Start Time:         Thu, 04 Apr 2019 10:13:54 +0000
+Labels:             <none>
+Annotations:        kubernetes.io/limit-ranger=LimitRanger plugin set: memory request for container private-reg-container; memory limit for container private-reg-container
+Status:             Running
+IP:                 10.244.2.211
+Containers:
+  private-reg-container:
+    Container ID:   docker://173969e67d30f84ad1c2a7cb0d6e8f42d65dfd8ec53cac5bd37b6af69c8fb00d
+    Image:          10.1.0.7:5000/actuator-sample
+    Image ID:       docker-pullable://10.1.0.7:5000/actuator-sample@sha256:7960d188ec3d29b3427261b895ec194b10ff025f4a3affe9b7f27098bd2aa796
+    Port:           <none>
+    Host Port:      <none>
+    State:          Running
+      Started:      Thu, 04 Apr 2019 10:14:17 +0000
+    Ready:          True
+    Restart Count:  0
+    Limits:
+      memory:  512Mi
+    Requests:
+      memory:     256Mi
+    Environment:  <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from default-token-vmt7l (ro)
+Conditions:
+  Type              Status
+  Initialized       True 
+  Ready             True 
+  ContainersReady   True 
+  PodScheduled      True 
+Volumes:
+  default-token-vmt7l:
+    Type:        Secret (a volume populated by a Secret)
+    SecretName:  default-token-vmt7l
+    Optional:    false
+QoS Class:       Burstable
+Node-Selectors:  <none>
+Tolerations:     node.kubernetes.io/not-ready:NoExecute for 300s
+                 node.kubernetes.io/unreachable:NoExecute for 300s
+Events:
+  Type    Reason     Age   From                  Message
+  ----    ------     ----  ----                  -------
+  Normal  Scheduled  2m    default-scheduler     Successfully assigned default/private-reg to kubeworker2
+  Normal  Pulling    1m    kubelet, kubeworker2  pulling image "10.1.0.7:5000/actuator-sample"
+  Normal  Pulled     1m    kubelet, kubeworker2  Successfully pulled image "10.1.0.7:5000/actuator-sample"
+  Normal  Created    1m    kubelet, kubeworker2  Created container
+  Normal  Started    1m    kubelet, kubeworker2  Started container
+
+
+Conclusion:
+ Finally, it is possible to deploy these private pod.!..
+
+
+
