@@ -1,0 +1,34 @@
+image: docker:latest
+services:
+  - docker:dind
+
+variables:
+  DOCKER_DRIVER: overlay
+  SPRING_PROFILES_ACTIVE: gitlab-ci
+
+stages:
+  - build
+  - package
+  - deploy
+
+maven-build:
+  image: maven:3-jdk-8
+  stage: build
+  script: "mvn package -B"
+  artifacts:
+    paths:
+      - target/*.jar
+
+docker-build:
+  stage: package
+  script:
+  - docker build . -t 10.1.0.7:5000/actuator-sample
+  - docker login -u testuser -p testpassword 10.1.0.7:5000
+  - docker push 10.1.0.7:5000/actuator-sample
+
+k8s-deploy:
+  stage: deploy
+  script:
+  # 10.1.0.2 == kubernetes master
+  - scp deployment.yml vagrant@10.1.0.2:/home/vagrant/
+  - ssh vagrant@10.1.0.2 'kubectl apply -f deployment.yml'
