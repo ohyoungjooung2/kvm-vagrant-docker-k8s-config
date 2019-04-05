@@ -1,6 +1,8 @@
 # kvm-vagrant-docker-k8s-config
 This vagrant Vagrantfile and setup will consist of k8s dev setup.
 Just bash setup.sh will do the work.
+Example)
+  user@host$ bash setup.sh
 
 Please keep in mind:
 Warning.
