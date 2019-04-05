@@ -25,6 +25,7 @@ Last login: Wed Apr  3 18:24:24 2019
 
 
 NAME          STATUS     ROLES    AGE    VERSION
+
 kubemaster    Ready      master   13m    v1.14.0
 kubeworker1   NotReady   <none>   105s   v1.14.0
 kubeworker2   NotReady   <none>   96s    v1.14.0
