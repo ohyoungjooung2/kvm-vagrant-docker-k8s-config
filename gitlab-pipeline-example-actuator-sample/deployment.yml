@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: actuator-sample
 spec:
-  replicas: 2
+  replicas: 1
   template:
      metadata:
        labels:
@@ -18,4 +18,4 @@ spec:
          - containerPort: 10000
        imagePullSecrets:
          #- name: registry.gitlab.com
-         - name: 10.1.0.7:5000
+         - name: regcred
