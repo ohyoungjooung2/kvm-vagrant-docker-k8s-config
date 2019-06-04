@@ -47,7 +47,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
    kubeworker1.vm.network "private_network", ip:"10.1.0.3"
    kubeworker1.vm.host_name = "kubeworker1"
      kubeworker1.vm.provider :libvirt do |lv|
-      lv.memory = 1024
+      lv.memory = 2048
      end
    end
 
@@ -64,7 +64,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
    kubeworker2.vm.network "private_network", ip:"10.1.0.4"
    kubeworker2.vm.host_name = "kubeworker2"
      kubeworker2.vm.provider :libvirt do |lv|
-      lv.memory = 1024
+      lv.memory = 2048
      end
    end
 
@@ -90,33 +90,36 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 #
 #   
 #   #docker local rigstry server
-#   config.vm.define "dockerlocalg" do |dockerlocalg|
-#   dockerlocalg.vm.box = "centos/7"
-#   dockerlocalg.vm.provision "shell", path: "check_key.sh"
-#   dockerlocalg.vm.provision "shell", :path => "k8s_docker_install.sh"
-#   #dockerlocalg.vm.provision "shell", :path => "swapoff.sh"
-#   #dockerlocalg.vm.provision "shell", :path => "k8s_install.sh"
-#   #dockerlocalg.vm.provision "shell", :path => "admjoin.sh"
-#   dockerlocalg.vm.network "private_network", ip:"10.1.0.7"
-#   dockerlocalg.vm.host_name = "dockerlocalg"
-#     dockerlocalg.vm.provider :libvirt do |lv|
-#      lv.memory = 512
-#      lv.storage :file, :size => '10G', :type => 'raw'
-#     end
-#   end
+   config.vm.define "dockerlocalg" do |dockerlocalg|
+   dockerlocalg.vm.box = "centos/7"
+   dockerlocalg.vm.provision "shell", path: "check_key.sh"
+   dockerlocalg.vm.provision "file", source: "id_rsa",destination: "/home/vagrant/.ssh/id_rsa"
+   dockerlocalg.vm.provision "shell", :path => "k8s_docker_install.sh"
+   dockerlocalg.vm.provision "shell", :path => "swapoff.sh"
+   dockerlocalg.vm.provision "shell", :path => "k8s_install.sh"
+   dockerlocalg.vm.provision "shell", :path => "admjoin.sh"
+   dockerlocalg.vm.network "private_network", ip:"10.1.0.7"
+   dockerlocalg.vm.host_name = "dockerlocalg"
+     dockerlocalg.vm.provider :libvirt do |lv|
+      lv.memory = 2048
+      lv.storage :file, :size => '10G', :type => 'raw'
+     end
+   end
 #
 #
 #
-#   config.vm.define "kubeworker3" do |kubeworker3|
-#   kubeworker3.vm.box = "centos/7"
-#   kubeworker3.vm.provision "shell", path: "check_key.sh"
-#   kubeworker3.vm.provision "shell", :path => "swapoff.sh"
-#   kubeworker3.vm.provision "shell", :path => "k8s_docker_install.sh"
-#   kubeworker3.vm.provision "shell", :path => "k8s_install.sh"
-#   kubeworker3.vm.network "private_network", ip:"10.1.0.5"
-#   kubeworker3.vm.host_name = "kubeworker3"
-#     kubeworker3.vm.provider :libvirt do |lv|
-#      lv.memory = 512
-#     end
-#   end
+   config.vm.define "kubeworker3" do |kubeworker3|
+   kubeworker3.vm.box = "centos/7"
+   kubeworker3.vm.provision "shell", path: "check_key.sh"
+   kubeworker3.vm.provision "file", source: "id_rsa",destination: "/home/vagrant/.ssh/id_rsa"
+   kubeworker3.vm.provision "shell", :path => "swapoff.sh"
+   kubeworker3.vm.provision "shell", :path => "k8s_docker_install.sh"
+   kubeworker3.vm.provision "shell", :path => "k8s_install.sh"
+   kubeworker3.vm.network "private_network", ip:"10.1.0.5"
+   kubeworker3.vm.host_name = "kubeworker3"
+     kubeworker3.vm.provider :libvirt do |lv|
+      lv.memory = 512
+      lv.storage :file, :size => '10G', :type => 'raw'
+     end
+   end
 end

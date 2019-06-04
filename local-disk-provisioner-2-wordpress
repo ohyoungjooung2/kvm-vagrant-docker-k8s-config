@@ -1,0 +1,497 @@
+[root@kubeworker3 ~]# cat /etc/fstab
+
+#
+# /etc/fstab
+# Created by anaconda on Sat May 12 18:50:26 2018
+#
+# Accessible filesystems, by reference, are maintained under '/dev/disk'
+# See man pages fstab(5), findfs(8), mount(8) and/or blkid(8) for more info
+#
+/dev/mapper/VolGroup00-LogVol00 /                       xfs     defaults        0 0
+UUID=570897ca-e759-4c81-90cf-389da6eee4cc /boot                   xfs     defaults        0 0
+#/dev/mapper/VolGroup00-LogVol01 swap                    swap    defaults        0 0
+/dev/vdb                                  /plocal_disk2  ext4    defaults        0 0
+
+
+
+#K8s node add
+[vagrant@kubemaster ~]$ kubectl get nodes
+NAME           STATUS   ROLES    AGE     VERSION
+dockerlocalg   Ready    <none>   2d18h   v1.14.2
+kubemaster     Ready    master   2d19h   v1.14.2
+kubeworker1    Ready    <none>   2d18h   v1.14.2
+kubeworker2    Ready    <none>   2d18h   v1.14.2
+
+
+
+[vagrant@kubemaster ~]$ kubeadm token create
+o7vbo1.71zcpwe5ppxjepd4
+[vagrant@kubemaster ~]$ 
+
+
+[vagrant@kubemaster ~]$ openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* //'
+a163dc8af45c321027c834d58e4bbd7c3bbf4aabc557b52d91b2a9356c9bcc91
+[vagrant@kubemaster ~]$ 
+
+
+
+
+
+[root@kubeworker3 ~]# kubeadm join --token o7vbo1.71zcpwe5ppxjepd4 10.1.0.2:6443 --discovery-token-ca-cert-hash sha256:a163dc8af45c321027c834d58e4bbd7c3bbf4aabc557b52d91b2a9356c9bcc91
+[preflight] Running pre-flight checks
+	[WARNING IsDockerSystemdCheck]: detected "cgroupfs" as the Docker cgroup driver. The recommended driver is "systemd". Please follow the guide at https://kubernetes.io/docs/setup/cri/
+[preflight] Reading configuration from the cluster...
+[preflight] FYI: You can look at this config file with 'kubectl -n kube-system get cm kubeadm-config -oyaml'
+[kubelet-start] Downloading configuration for the kubelet from the "kubelet-config-1.14" ConfigMap in the kube-system namespace
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[kubelet-start] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
+[kubelet-start] Activating the kubelet service
+[kubelet-start] Waiting for the kubelet to perform the TLS Bootstrap...
+
+This node has joined the cluster:
+* Certificate signing request was sent to apiserver and a response was received.
+* The Kubelet was informed of the new secure connection details.
+
+Run 'kubectl get nodes' on the control-plane to see this node join the cluster.
+
+
+
+
+[vagrant@kubemaster ~]$ kubectl get nodes
+NAME           STATUS   ROLES    AGE     VERSION
+dockerlocalg   Ready    <none>   2d19h   v1.14.2
+kubemaster     Ready    master   2d19h   v1.14.2
+kubeworker1    Ready    <none>   2d19h   v1.14.2
+kubeworker2    Ready    <none>   2d19h   v1.14.2
+kubeworker3    Ready    <none>   7m55s   v1.14.2
+[vagrant@kubemaster ~]$ 
+
+
+
+
+
+#storage class for wordpress
+
+[vagrant@kubemaster ~]$ cat wp-local-pv-sc.yaml 
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: plocal-storage-wp
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+[vagrant@kubemaster ~]$ kubectl create -f wp-local-pv-sc.yaml 
+storageclass.storage.k8s.io/plocal-storage-wp created
+[vagrant@kubemaster ~]$ kb get sc
+NAME                PROVISIONER                    AGE
+plocal-storage      kubernetes.io/no-provisioner   2d15h
+plocal-storage-wp   kubernetes.io/no-provisioner   6s
+
+
+
+
+[vagrant@kubemaster ~]$ cat wp-local-pv.yaml 
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: plocal-disk-wp
+spec:
+  capacity:
+    storage: 10Gi
+  # volumeMode field requires BlockVolume Alpha feature gate to be enabled.
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: plocal-storage-wp
+  local:
+    path: /plocal_disk2
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker3
+[vagrant@kubemaster ~]$ kb create -f wp-local-pv.yaml 
+persistentvolume/plocal-disk-wp created
+[vagrant@kubemaster ~]$ kb get pv
+NAME             CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS      CLAIM                              STORAGECLASS        REASON   AGE
+plocal-disk      10Gi       RWO            Delete           Bound       default/plocal-storage-mariadb-0   plocal-storage               2d1h
+plocal-disk-wp   10Gi       RWO            Delete           Available                                      plocal-storage-wp            4s
+
+
+#maria db root password.
+[vagrant@kubemaster ~]$ cat kustomization.yaml 
+secretGenerator:
+- name: mariadb-pass
+  literals:
+  - password=StrongPass$^^$
+resources:
+  - mariadb-nore.yaml
+
+
+
+
+
+
+[vagrant@kubemaster ~]$ cat kustomization.yaml 
+secretGenerator:
+- name: mariadb-pass
+  literals:
+  - password=StrongPass$^^$
+resources:
+  - mariadb-nore.yaml
+[vagrant@kubemaster ~]$ vi mariadb-nore.yaml 
+
+
+
+
+[vagrant@kubemaster wptest]$ cat kustomization.yaml 
+secretGenerator:
+- name: mariadb-pass
+  literals:
+  - password=StrongPass$^^$
+resources:
+  - mariadb-nore.yaml
+[vagrant@kubemaster wptest]$ cat mariadb-nore.yaml 
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mariadb
+spec:
+  selector:
+    matchLabels:
+      app: mariadb
+  serviceName: mariadb
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: mariadb
+    spec:
+      containers:
+      - name: mariadb
+        image: mariadb:10.1.14
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+               name: mariadb-pass
+               key: password
+        ports:
+        - name: mariadb
+          containerPort: 3306
+        volumeMounts:
+        - name: plocal-storage
+          mountPath: /var/lib/mysql
+          subPath: mariadb
+
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+
+  volumeClaimTemplates:
+  - metadata:
+      #name: data
+      name: plocal-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "plocal-storage"
+      resources:
+        requests:
+          storage: 10Gi
+
+
+
+
+[vagrant@kubemaster wptest]$ kb apply -k .
+secret/mariadb-pass-hmt2hb8m6g created
+statefulset.apps/mariadb created
+[vagrant@kubemaster wptest]$ 
+
+
+
+[vagrant@kubemaster ~]$ kb exec -it mariadb-0 bash
+root@mariadb-0:/# ls
+bin  boot  core  dev  docker-entrypoint-initdb.d  docker-entrypoint.sh	etc  home  lib	lib64  media  mnt  opt	proc  root  run  sbin  srv  sys  tmp  usr  var
+root@mariadb-0:/# mysql
+ERROR 1045 (28000): Access denied for user 'root'@'localhost' (using password: NO)
+root@mariadb-0:/# mysql -u root -p
+
+MariaDB [(none)]> show databases
+    -> ;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
++--------------------+
+3 rows in set (0.00 sec)
+
+
+MariaDB [mysql]> select password from user;
++-------------------------------------------+
+| password                                  |
++-------------------------------------------+
+| *D674B2C0175FB3763DD6952371BE0DA43805D876 |
++-------------------------------------------+
+
+
+[vagrant@kubemaster wptest]$ cat wp-svc.yaml 
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+  labels:
+    app: wordpress
+spec:
+  ports:
+    - port: 80
+  selector:
+    app: wordpress
+    tier: frontend
+  type: NodePort
+  ports:
+  - port: 8070
+    targetPort: 80
+    protocol: TCP
+    name: http
+  
+
+[vagrant@kubemaster wptest]$ kb create -f wp-svc.yaml 
+service/wordpress created
+[vagrant@kubemaster wptest]$ kb get svc
+NAME         TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+kubernetes   ClusterIP   10.96.0.1        <none>        443/TCP          3d3h
+mariadb      ClusterIP   None             <none>        3306/TCP         2d9h
+wordpress    NodePort    10.107.160.122   <none>        8070:32398/TCP   2s
+
+
+
+[vagrant@kubemaster wptest]$ cat wp-pvc.yaml 
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wp-pv-claim
+  labels:
+    app: wordpress
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: plocal-storage-wp
+[vagrant@kubemaster wptest]$ kb create -f wp-pvc.yaml 
+persistentvolumeclaim/wp-pv-claim created
+[vagrant@kubemaster wptest]$ kb get pvc
+NAME                       STATUS    VOLUME        CAPACITY   ACCESS MODES   STORAGECLASS        AGE
+plocal-storage-mariadb-0   Bound     plocal-disk   10Gi       RWO            plocal-storage      45m
+wp-pv-claim                Pending                            
+
+
+
+
+[vagrant@kubemaster wp]$ cat kustomization.yaml 
+secretGenerator:
+- name: mariadb-pass
+  literals:
+  - password=StrongPass$^^$
+resources:
+  - wp-dep.yaml
+[vagrant@kubemaster wp]$ cat wp-dep.yaml 
+---
+apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+kind: Deployment
+metadata:
+  name: wordpress
+  labels:
+    app: wordpress
+spec:
+  selector:
+    matchLabels:
+      app: wordpress
+      tier: frontend
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        tier: frontend
+    spec:
+      containers:
+      - image: wordpress:4.8-apache
+        name: wordpress
+        env:
+        - name: WORDPRESS_DB_HOST
+          value: mariadb
+        - name: WORDPRESS_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mariadb-pass
+              key: password
+        ports:
+        - containerPort: 80
+          name: wordpress
+        volumeMounts:
+        - name: wordpress-persistent-storage
+          mountPath: /var/www/html
+      volumes:
+      - name: wordpress-persistent-storage
+        persistentVolumeClaim:
+          claimName: wp-pv-claim
+
+
+[vagrant@kubemaster wp]$ kb apply -k .
+secret/mariadb-pass-hmt2hb8m6g unchanged
+deployment.apps/wordpress created
+
+
+[vagrant@kubemaster wp]$ kb get po
+NAME                         READY   STATUS    RESTARTS   AGE
+mariadb-0                    1/1     Running   0          49m
+wordpress-585d79f44d-dkltk   1/1     Running   0          109s
+[vagrant@kubemaster wp]$ 
+
+[vagrant@kubemaster wp]$ kb get svc wordpress
+NAME        TYPE       CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+wordpress   NodePort   10.107.160.122   <none>        8070:32398/TCP   32m
+
+[vagrant@kubemaster ~]$ kb get po
+NAME                         READY   STATUS    RESTARTS   AGE
+mariadb-0                    1/1     Running   0          108m
+wordpress-56f5bf46dd-v58rm   1/1     Running   0          21m
+[vagrant@kubemaster ~]$ kb describe po wordpress-56f5bf46dd-v58rm
+Name:               wordpress-56f5bf46dd-v58rm
+Namespace:          default
+Priority:           0
+PriorityClassName:  <none>
+Node:               kubeworker3/192.168.121.139
+Start Time:         Mon, 03 Jun 2019 20:07:41 +0000
+Labels:             app=wordpress
+                    pod-template-hash=56f5bf46dd
+                    tier=frontend
+Annotations:        <none>
+Status:             Running
+IP:                 10.244.4.7
+Controlled By:      ReplicaSet/wordpress-56f5bf46dd
+Containers:
+  wordpress:
+    Container ID:   docker://62e867bb24ba6c24515bec47bf22513e3c752d49b173717c5caba67ce582492e
+    Image:          wordpress:4.8-apache
+    Image ID:       docker-pullable://wordpress@sha256:6216f64ab88fc51d311e38c7f69ca3f9aaba621492b4f1fa93ddf63093768845
+    Port:           80/TCP
+    Host Port:      0/TCP
+    State:          Running
+      Started:      Mon, 03 Jun 2019 20:07:42 +0000
+    Ready:          True
+    Restart Count:  0
+    Environment:
+      WORDPRESS_DB_HOST:      mariadb
+      WORDPRESS_DB_PASSWORD:  <set to the key 'password' in secret 'mariadb-pass-hmt2hb8m6g'>  Optional: false
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from default-token-wxbxs (ro)
+      /var/www/html from wordpress-persistent-storage (rw)
+Conditions:
+  Type              Status
+  Initialized       True 
+  Ready             True 
+  ContainersReady   True 
+  PodScheduled      True 
+Volumes:
+  wordpress-persistent-storage:
+    Type:       PersistentVolumeClaim (a reference to a PersistentVolumeClaim in the same namespace)
+    ClaimName:  wp-pv-claim
+    ReadOnly:   false
+  default-token-wxbxs:
+    Type:        Secret (a volume populated by a Secret)
+    SecretName:  default-token-wxbxs
+    Optional:    false
+QoS Class:       BestEffort
+Node-Selectors:  <none>
+Tolerations:     node.kubernetes.io/not-ready:NoExecute for 300s
+                 node.kubernetes.io/unreachable:NoExecute for 300s
+Events:
+  Type    Reason     Age   From                  Message
+  ----    ------     ----  ----                  -------
+  Normal  Scheduled  21m   default-scheduler     Successfully assigned default/wordpress-56f5bf46dd-v58rm to kubeworker3
+  Normal  Pulled     21m   kubelet, kubeworker3  Container image "wordpress:4.8-apache" already present on machine
+  Normal  Created    21m   kubelet, kubeworker3  Created container wordpress
+  Normal  Started    21m   kubelet, kubeworker3  Started container wordpress
+[vagrant@kubemaster ~]$ telnet 10.244.4.7 80
+Trying 10.244.4.7...
+Connected to 10.244.4.7.
+Escape character is '^]'.
+^]
+
+telnet> q
+Connection closed.
+[vagrant@kubemaster ~]$ wgert 10.244.4.7
+-bash: wgert: command not found
+[vagrant@kubemaster ~]$ wget 10.244.4.7
+--2019-06-03 20:30:12--  http://10.244.4.7/
+Connecting to 10.244.4.7:80... connected.
+HTTP request sent, awaiting response... 302 Found
+Location: http://10.244.4.7/wp-admin/install.php [following]
+--2019-06-03 20:30:12--  http://10.244.4.7/wp-admin/install.php
+Reusing existing connection to 10.244.4.7:80.
+HTTP request sent, awaiting response... 200 OK
+Length: unspecified [text/html]
+Saving to: 'index.html.1'
+
+    [ <=>                                                                  ] 11,351      --.-K/s   in 0.04s   
+
+2019-06-03 20:30:13 (310 KB/s) - 'index.html.1' saved [11351]
+
+
+From host if nodePort is working or not.
+oyj@Workstation-oyj-X555QG ~/kvm-vagrant-docker-k8s-config$wget http://10.1.0.5:32333
+--2019-06-05 08:25:49--  http://10.1.0.5:32333/
+Connecting to 10.1.0.5:32333... connected.
+HTTP request sent, awaiting response... 302 Found
+Location: http://10.1.0.5:32333/wp-admin/install.php [following]
+--2019-06-05 08:25:49--  http://10.1.0.5:32333/wp-admin/install.php
+Reusing existing connection to 10.1.0.5:32333.
+HTTP request sent, awaiting response... 200 OK
+Length: unspecified [text/html]
+Saving to: ‘index.html’
+
+index.html                   [ <=>                              ]  11.11K  --.-KB/s    in 0.03s   
+
+2019-06-05 08:25:51 (428 KB/s) - ‘index.html’ saved [11375]
+
+oyj@Workstation-oyj-X555QG ~/kvm-vagrant-docker-k8s-config$wget http://10.1.0.3:32333
+--2019-06-05 08:25:59--  http://10.1.0.3:32333/
+Connecting to 10.1.0.3:32333... connected.
+HTTP request sent, awaiting response... 302 Found
+Location: http://10.1.0.3:32333/wp-admin/install.php [following]
+--2019-06-05 08:25:59--  http://10.1.0.3:32333/wp-admin/install.php
+Reusing existing connection to 10.1.0.3:32333.
+HTTP request sent, awaiting response... 200 OK
+Length: unspecified [text/html]
+Saving to: ‘index.html.1’
+
+index.html.1                 [ <=>                              ]  11.11K  --.-KB/s    in 0.03s   
+
+2019-06-05 08:26:00 (443 KB/s) - ‘index.html.1’ saved [11375]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

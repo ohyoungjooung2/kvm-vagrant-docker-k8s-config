@@ -1,0 +1,398 @@
+mariadb on k8s local disk persistent volume provisioner.
+
+[root@dockerlocalg ~]# fdisk -l | grep /dev/vdb
+Disk /dev/vdb: 10.7 GB, 10737418240 bytes, 20971520 sectors
+
+[vagrant@kubemaster ~]$ kubectl get nodes
+NAME           STATUS   ROLES    AGE    VERSION
+dockerlocalg   Ready    <none>   108m   v1.14.2
+kubemaster     Ready    master   113m   v1.14.2
+kubeworker1    Ready    <none>   107m   v1.14.2
+kubeworker2    Ready    <none>   107m   v1.14.2
+
+
+Option 3: Baremetal environments
+
+    Partition and format the disks on each node according to your application's requirements.
+    Mount all the filesystems under one directory per StorageClass. The directories are specified in a configmap, see below.
+    Configure the Kubernetes API Server, controller-manager, scheduler, and all kubelets with KUBE_FEATURE_GATES as described above.
+    If not using the default Kubernetes scheduler policy, the following predicates must be enabled:
+        Pre-1.9: NoVolumeBindConflict
+        1.9+: VolumeBindingChecker
+
+
+https://github.com/kubernetes-sigs/sig-storage-local-static-provisioner/blob/master/docs/getting-started.md#option-3-baremetal-environments
+
+[root@dockerlocalg ~]# fdisk /dev/vdb
+Welcome to fdisk (util-linux 2.23.2).
+
+Changes will remain in memory only, until you decide to write them.
+Be careful before using the write command.
+
+Device does not contain a recognized partition table
+Building a new DOS disklabel with disk identifier 0x43a9d38c.
+
+Command (m for help): n
+Partition type:
+   p   primary (0 primary, 0 extended, 4 free)
+   e   extended
+Select (default p): p
+Partition number (1-4, default 1): 
+First sector (2048-20971519, default 2048): 
+Using default value 2048
+Last sector, +sectors or +size{K,M,G} (2048-20971519, default 20971519): 
+Using default value 20971519
+Partition 1 of type Linux and of size 10 GiB is set
+
+Command (m for help): wq
+The partition table has been altered!
+
+Calling ioctl() to re-read partition table.
+Syncing disks.
+
+
+
+
+[root@dockerlocalg ~]# mkfs.ext4 /dev/vdb
+mke2fs 1.42.9 (28-Dec-2013)
+Filesystem label=
+OS type: Linux
+Block size=4096 (log=2)
+Fragment size=4096 (log=2)
+Stride=0 blocks, Stripe width=0 blocks
+655360 inodes, 2621440 blocks
+131072 blocks (5.00%) reserved for the super user
+First data block=0
+Maximum filesystem blocks=2151677952
+80 block groups
+32768 blocks per group, 32768 fragments per group
+8192 inodes per group
+Superblock backups stored on blocks: 
+	32768, 98304, 163840, 229376, 294912, 819200, 884736, 1605632
+
+Allocating group tables: done                            
+Writing inode tables: done                            
+Creating journal (32768 blocks): done
+Writing superblocks and filesystem accounting information: done 
+
+
+
+[root@dockerlocalg ~]# cat /etc/fstab | tail -1
+/dev/vdb                                  /plocal_disk   ext4    defaults        0 0
+
+[root@dockerlocalg ~]# cat /etc/fstab | tail -1
+/dev/vdb                                  /plocal_disk   ext4    defaults        0 0
+[root@dockerlocalg ~]# mkdir /plocal_disk
+[root@dockerlocalg ~]# mount /dev/vdb /plocal_disk/
+
+
+
+[vagrant@kubemaster ~]$ cat local-pv-sc.yaml 
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: plocal-storage
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+
+
+[vagrant@kubemaster ~]$ kubectl create -f local-pv-sc.yaml 
+storageclass.storage.k8s.io/plocal-storage created
+[vagrant@kubemaster ~]$ kubectl get sc
+NAME             PROVISIONER                    AGE
+plocal-storage   kubernetes.io/no-provisioner   8s
+
+
+
+[vagrant@kubemaster ~]$ cat local-pv.yaml 
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: plocal-disk
+spec:
+  capacity:
+    storage: 10Gi
+  # volumeMode field requires BlockVolume Alpha feature gate to be enabled.
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: plocal-storage
+  local:
+    path: /plocal_disk
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - dockerlocalg
+
+
+
+
+[vagrant@kubemaster ~]$ kubectl create -f local-pv.yaml 
+persistentvolume/plocal-disk created
+[vagrant@kubemaster ~]$ kubectl describe pv plocal-disk
+Name:              plocal-disk
+Labels:            <none>
+Annotations:       <none>
+Finalizers:        [kubernetes.io/pv-protection]
+StorageClass:      plocal-storage
+Status:            Available
+Claim:             
+Reclaim Policy:    Delete
+Access Modes:      RWO
+VolumeMode:        Filesystem
+Capacity:          10Gi
+Node Affinity:     
+  Required Terms:  
+    Term 0:        kubernetes.io/hostname in [dockerlocalg]
+Message:           
+Source:
+    Type:  LocalVolume (a persistent volume backed by local storage on a node)
+    Path:  /plocal_disk
+Events:    <none>
+
+
+[vagrant@kubemaster ~]$ kubectl get pv
+NAME          CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS      CLAIM   STORAGECLASS     REASON   AGE
+plocal-disk   10Gi       RWO            Delete           Available           plocal-storage            13m
+
+
+
+2. MySQL install
+
+
+Each node requires more than or same with 2048. If not, like below messages will show up.
+
+"0/4 nodes are available: 1 node(s) had taints that the pod didn't tolerate, 3 Insufficient memory."
+
+
+
+#Refreence:
+https://kubernetes.io/docs/tasks/run-application/run-replicated-stateful-application/
+
+
+[vagrant@kubemaster ~]$ cat mysql-configmap.yaml 
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql
+  labels:
+     app: mysql
+data:
+  master.cnf: |
+     [mysqld]
+     log-bin
+  slave.cnf: |
+     [mysqld]
+     super-read-only
+
+
+
+
+
+
+
+[vagrant@kubemaster ~]$ cat norepli-mysql-stset.yaml 
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  serviceName: mysql
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:5.7
+        env:
+        - name: MYSQL_ALLOW_EMPTY_PASSWORD
+          value: "1"
+        ports:
+        - name: mysql
+          containerPort: 3306
+        volumeMounts:
+        - name: plocal-storage
+          mountPath: /var/lib/mysql
+          subPath: mysql
+
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+        livenessProbe:
+          exec:
+            command: ["mysqladmin","ping"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command: ["mysql", "-h", "127.0.0.1", "-e", "SELECT 1"]
+          initialDelaySeconds: 5
+          periodSeconds: 2
+          timeoutSeconds: 1
+
+      volumes:
+      - name: conf
+        emptyDir: {}
+      - name: config-map
+        configMap:
+          name: mysql
+  volumeClaimTemplates:
+  - metadata:
+      #name: data
+      name: plocal-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "plocal-storage"
+      resources:
+        requests:
+          storage: 10Gi
+
+
+
+
+[vagrant@kubemaster ~]$ kubectl get pods
+NAME      READY   STATUS    RESTARTS   AGE
+mysql-0   1/1     Running   0          2m29s
+
+
+
+[vagrant@kubemaster ~]$ kubectl delete -f norepli-mysql-stset.yaml 
+statefulset.apps "mysql" deleted
+[vagrant@kubemaster ~]$ kubectl get pvc
+NAME                     STATUS   VOLUME        CAPACITY   ACCESS MODES   STORAGECLASS     AGE
+plocal-storage-mysql-0   Bound    plocal-disk   10Gi       RWO            plocal-storage   30m
+[vagrant@kubemaster ~]$ kubectl delete pvc plocal-storage-mysql-0
+persistentvolumeclaim "plocal-storage-mysql-0" deleted
+
+
+
+
+#Moving to maria-db
+
+
+[vagrant@kubemaster ~]$ kubectl create -f mariadb-svc.yaml 
+service/mariadb created
+[vagrant@kubemaster ~]$ 
+
+
+[vagrant@kubemaster ~]$ kubectl delete pv --all
+persistentvolume "plocal-disk" deleted
+[vagrant@kubemaster ~]$ kubectl delete pvc --all
+persistentvolumeclaim "plocal-storage-mysql-0" deleted
+
+
+
+
+[vagrant@kubemaster ~]$ kubectl create -f local-pv.yaml 
+persistentvolume/plocal-disk created
+[vagrant@kubemaster ~]$ kubectl get pv
+NAME          CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS      CLAIM   STORAGECLASS     REASON   AGE
+plocal-disk   10Gi       RWO            Delete           Available           plocal-storage            3s
+[vagrant@kubemaster ~]$ 
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mariadb
+spec:
+  selector:
+    matchLabels:
+      app: mariadb
+  serviceName: mariadb
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: mariadb
+    spec:
+      containers:
+      - name: mariadb
+        image: mariadb:10.1.14
+        env:
+        - name: MYSQL_ALLOW_EMPTY_PASSWORD
+          value: "1"
+        ports:
+        - name: mariadb
+          containerPort: 3306
+        volumeMounts:
+        - name: plocal-storage
+          mountPath: /var/lib/mysql
+          subPath: mariadb
+
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+
+  volumeClaimTemplates:
+  - metadata:
+      #name: data
+      name: plocal-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "plocal-storage"
+      resources:
+        requests:
+          storage: 10Gi
+
+
+[vagrant@kubemaster ~]$ kubectl create -f mariadb-nore.yaml 
+
+
+
+
+
+[vagrant@kubemaster ~]$ kubectl get pods
+NAME        READY   STATUS    RESTARTS   AGE
+mariadb-0   1/1     Running   0          3m8s
+
+
+
+[vagrant@kubemaster ~]$ kubectl run -i --tty --image busybox:1.28 dns-test --restart=Never --rm nslookup mariadb-0.mariadb
+Server:    10.96.0.10
+Address 1: 10.96.0.10 kube-dns.kube-system.svc.cluster.local
+
+Name:      mariadb-0.mariadb
+Address 1: 10.244.1.13 mariadb-0.mariadb.default.svc.cluster.local
+pod "dns-test" deleted
+
+
+
+
+[vagrant@kubemaster ~]$ mysql -h 10.244.1.13 -u root -p
+Enter password: 
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 5
+Server version: 10.1.14-MariaDB-1~jessie mariadb.org binary distribution
+
+Copyright (c) 2000, 2018, Oracle, MariaDB Corporation Ab and others.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+MariaDB [(none)]> 
+MariaDB [(none)]> show databases
+    -> ;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
++--------------------+
+3 rows in set (0.00 sec)
+
+
+
