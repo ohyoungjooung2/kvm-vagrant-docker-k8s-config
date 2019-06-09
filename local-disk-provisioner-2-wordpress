@@ -979,11 +979,73 @@ CMD ["mysqld"]
 
 vagrant@dockerlocalg ~]$docker build . -t ohyoungjooung2/mariadb:10.1.14-master
 
-#This node has mariadb:10.1.14 and statefulset will reside on this node(dockerlocalg). Later, we must push this iimage.
+#This node has mariadb:10.1.14 and statefulset will reside on this node(dockerlocalg). Later, we must push this image.
 
 
 #From master
+[vagrant@kubemaster mariadb]$ cat mariadb-master.yaml 
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mariadb
+spec:
+  selector:
+    matchLabels:
+      app: mariadb
+  serviceName: mariadb
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: mariadb
+    spec:
+      containers:
+      - name: mariadb
+        #image: mariadb:10.1.14
+        image: ohyoungjooung2/mariadb:10.1.14-master
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+               name: mariadb-pass
+               key: password
+        - name: MYSQL_REPLICATION_USER
+          value: "rep-user"
+        - name: MYSQL_REPLICATION_PASSWORD
+          value: "Good$^Password!"         
+        ports:
+        - name: mariadb
+          containerPort: 3306
+        volumeMounts:
+        - name: plocal-storage
+          mountPath: /var/lib/mysql
+          subPath: mariadb
+        - name: mariadb-master-cnf
+          mountPath: /etc/mysql/conf.d
 
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+    
+
+
+      volumes:
+      - name: mariadb-master-cnf
+        configMap:
+          name: mariadb-master.cnf
+
+        
+       
+  volumeClaimTemplates:
+  - metadata:
+      name: plocal-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "plocal-storage"
+      resources:
+        requests:
+          storage: 10Gi
 
 [vagrant@kubemaster mariadb]$ kb apply -k .
 secret/mariadb-pass-hmt2hb8m6g unchanged
@@ -1006,10 +1068,8 @@ Copyright (c) 2000, 2016, Oracle, MariaDB Corporation Ab and others.
 
 Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
 
-MariaDB [(none)]> show masters;
-ERROR 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'masters' at line 1
-MariaDB [(none)]> show master;
-ERROR 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 1
+
+
 MariaDB [(none)]> show master status;
 +--------------------+----------+--------------+------------------+
 | File               | Position | Binlog_Do_DB | Binlog_Ignore_DB |
@@ -1023,6 +1083,626 @@ MariaDB [(none)]>
 
 
 
+
+
+#Slave configuration.
+
+[vagrant@kubemaster mariadb_sv]$ cp -rfpv ../configmap_files/ .
+'../configmap_files/' -> './configmap_files'
+'../configmap_files/my-master.cnf' -> './configmap_files/my-master.cnf'
+
+
+[vagrant@kubemaster configmap_files]$ cp my-master.cnf my-slave.cnf
+[vagrant@kubemaster configmap_files]$ cat my-slave.cnf 
+# MariaDB-specific config file.
+# Read by /etc/mysql/my.cnf
+#
+[client]
+#  Default is Latin1, if you need UTF-8 set this (also in server section)
+# default-character-set = utf8 
+#
+[mysqld]
+#slave server_id 2 server for replication
+log-bin
+server_id=2
+log-basename=slave2
+# * Character sets
+#  Default is Latin1, if you need UTF-8 set all this (also in client section)
+character_set_server   = utf8 
+collation_server       = utf8_general_ci 
+#
+[mysqld_safe]
+skip_log_error
+syslog
+
+[mariadb]
+
+
+#Create configmap.
+[vagrant@kubemaster configmap_files]$ kb create configmap mariadb-slave.cnf --from-file=my-slave.cnf
+configmap/mariadb-slave.cnf created
+
+
+
+[vagrant@kubemaster configmap_files]$ kb describe configmap mariadb-slave.cnf
+Name:         mariadb-slave.cnf
+Namespace:    default
+Labels:       <none>
+Annotations:  <none>
+
+Data
+====
+my-slave.cnf:
+----
+# MariaDB-specific config file.
+# Read by /etc/mysql/my.cnf
+#
+[client]
+#  Default is Latin1, if you need UTF-8 set this (also in server section)
+# default-character-set = utf8 
+#
+[mysqld]
+#slave server_id 2 server for replication
+log-bin
+server_id=2
+log-basename=slave2
+# * Character sets
+#  Default is Latin1, if you need UTF-8 set all this (also in client section)
+character_set_server   = utf8 
+collation_server       = utf8_general_ci 
+#
+[mysqld_safe]
+skip_log_error
+syslog
+
+[mariadb]
+# See https://mariadb.com/kb/en/how-to-enable-tokudb-in-mariadb/
+# # for instructions how to enable TokuDB
+# #
+# # See https://mariadb.com/kb/en/tokudb-differences/ for differences
+# # between TokuDB in MariaDB and TokuDB from http://www.tokutek.com/
+#
+# #plugin-load-add=ha_tokudb.so
+
+Events:  <none>
+
+
+#Confimap into sts
+[vagrant@kubemaster mariadb_sv]$ vi mariadb-slave.yaml 
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mariadb-slave
+spec:
+  selector:
+    matchLabels:
+      app: mariadb-slave
+  serviceName: mariadb-slave
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: mariadb-slave
+    spec:
+      containers:
+      - name: mariadb
+        image: mariadb:10.1.14
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+               name: mariadb-pass
+               key: password
+        ports:
+        - name: mariadb-slave
+          containerPort: 3306
+        volumeMounts:
+        - name: mariadb-slave
+          mountPath: /var/lib/mysql
+          subPath: mariadb-sv
+        - name: mariadb-slave-cnf
+          mountPath: /etc/mysql/conf.d
+
+
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+
+
+      volumes:
+      - name: mariadb-slave-cnf
+        configMap:
+          name: mariadb-slave.cnf
+  volumeClaimTemplates:
+  - metadata:
+      #name: data
+      name: mariadb-slave
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "mariadb-slave-sc"
+      resources:
+        requests:
+          storage: 10Gi
+
+
+
+[vagrant@kubemaster mariadb_sv]$ kb apply -k .
+secret/mariadb-pass-hmt2hb8m6g unchanged
+statefulset.apps/mariadb-slave configured
+[vagrant@kubemaster mariadb_sv]$ kb get po
+NAME                         READY   STATUS        RESTARTS   AGE
+mariadb-0                    1/1     Running       1          11h
+mariadb-slave-0              0/1     Terminating   2          44h
+wordpress-77bd488d8b-2dtgb   1/1     Running       2          45h
+[vagrant@kubemaster mariadb_sv]$ kb get po
+NAME                         READY   STATUS        RESTARTS   AGE
+mariadb-0                    1/1     Running       1          11h
+mariadb-slave-0              0/1     Terminating   2          44h
+wordpress-77bd488d8b-2dtgb   1/1     Running       2          45h
+[vagrant@kubemaster mariadb_sv]$ k
+-bash: k: command not found
+[vagrant@kubemaster mariadb_sv]$ kb get po
+NAME                         READY   STATUS        RESTARTS   AGE
+mariadb-0                    1/1     Running       1          11h
+mariadb-slave-0              0/1     Terminating   2          44h
+wordpress-77bd488d8b-2dtgb   1/1     Running       2          45h
+[vagrant@kubemaster mariadb_sv]$ kb get po
+NAME                         READY   STATUS    RESTARTS   AGE
+mariadb-0                    1/1     Running   1          11h
+mariadb-slave-0              1/1     Running   0          2s
+wordpress-77bd488d8b-2dtgb   1/1     Running   2          45h
+
+
+[vagrant@kubeworker2 ~]$ df
+Filesystem                      1K-blocks    Used Available Use% Mounted on
+/dev/mapper/VolGroup00-LogVol00  39269648 1797476  37472172   5% /
+devtmpfs                           931640       0    931640   0% /dev
+tmpfs                              941384       0    941384   0% /dev/shm
+tmpfs                              941384    8952    932432   1% /run
+tmpfs                              941384       0    941384   0% /sys/fs/cgroup
+/dev/vdb                         10190100  153760   9495668   2% /mariadb-slave
+/dev/vda2                         1038336   64076    974260   7% /boot
+tmpfs                              188280       0    188280   0% /run/user/1000
+[vagrant@kubeworker2 ~]$ ls /mariadb-slave/
+lost+found  mariadb-sv
+[vagrant@kubeworker2 ~]$ cd /mariadb-slave/mariadb-sv/
+[vagrant@kubeworker2 mariadb-sv]$ ls
+aria_log.00000001  ib_logfile1        mysql               slave2-bin.index
+aria_log_control   ibdata1            performance_schema  slave2.pid
+ib_logfile0        multi-master.info  slave2-bin.000001
+
+
+#To be k8s tive... Make slave image. and rerun mariadb-slave sts.
+[vagrant@kubemaster mariadb_sv]$ vi docker-entrypoint.sh 
+
+
+[vagrant@kubeworker2 ~]$ docker images | grep mariadb
+mariadb                  10.1.14             0112f2662974        2 years ago         388 MB
+[vagrant@kubeworker2 ~]$ 
+
+
+
+[vagrant@dockerlocalg ~]$ ls
+Dockerfile  docker-entrypoint.sh  docker-entrypoint.sh.bak
+[vagrant@dockerlocalg ~]$ scp Dockerfile docker-entrypoint.sh vagrant@10.1.0.4:/home/vagrant/
+The authenticity of host '10.1.0.4 (10.1.0.4)' can't be established.
+ECDSA key fingerprint is SHA256:qDCC/vXdjVmp0AETcUmiUNzqj/f4v133DZQYKP18crw.
+ECDSA key fingerprint is MD5:3c:5a:ec:8a:b9:0a:37:c5:50:21:bd:46:74:46:b3:cb.
+Are you sure you want to continue connecting (yes/no)? yes
+Warning: Permanently added '10.1.0.4' (ECDSA) to the list of known hosts.
+Dockerfile                                                                              100%  263    47.6KB/s   00:00    
+docker-entrypoint.sh                                                                    100% 3869   827.6KB/s   00:00    
+[vagrant@dockerlocalg ~]$ 
+
+[vagrant@kubeworker2 ~]$ vi docker-entrypoint.sh 
+
+echo "STOP SLAVE;" | "${mysql[@]}"
+    107                 echo "CHANGE MASTER TO master_host='$MYSQL_MASTER_SERVICE_HOST', master_user='$MYSQL_REPLICATION_USER', master_password='$MYSQL_REPL        ICATION_PASSWORD' ;" | "${mysql[@]}"
+    108                 echo "START SLAVE;" | "${mysql[@]}"
+    109                         
+
+
+
+
+
+[vagrant@kubeworker2 ~]$ cat docker-entrypoint.sh 
+#!/bin/bash
+set -eo pipefail
+
+# if command starts with an option, prepend mysqld
+if [ "${1:0:1}" = '-' ]; then
+	set -- mysqld "$@"
+fi
+
+# skip setup if they want an option that stops mysqld
+wantHelp=
+for arg; do
+	case "$arg" in
+		-'?'|--help|--print-defaults|-V|--version)
+			wantHelp=1
+			break
+			;;
+	esac
+done
+
+_datadir() {
+	"$@" --verbose --help --log-bin-index=`mktemp -u` 2>/dev/null | awk '$1 == "datadir" { print $2; exit }'
+}
+
+# allow the container to be started with `--user`
+if [ "$1" = 'mysqld' -a -z "$wantHelp" -a "$(id -u)" = '0' ]; then
+	DATADIR="$(_datadir "$@")"
+	mkdir -p "$DATADIR"
+	chown -R mysql:mysql "$DATADIR"
+	exec gosu mysql "$BASH_SOURCE" "$@"
+fi
+
+if [ "$1" = 'mysqld' -a -z "$wantHelp" ]; then
+	# Get config
+	DATADIR="$(_datadir "$@")"
+
+	if [ ! -d "$DATADIR/mysql" ]; then
+		if [ -z "$MYSQL_ROOT_PASSWORD" -a -z "$MYSQL_ALLOW_EMPTY_PASSWORD" -a -z "$MYSQL_RANDOM_ROOT_PASSWORD" ]; then
+			echo >&2 'error: database is uninitialized and password option is not specified '
+			echo >&2 '  You need to specify one of MYSQL_ROOT_PASSWORD, MYSQL_ALLOW_EMPTY_PASSWORD and MYSQL_RANDOM_ROOT_PASSWORD'
+			exit 1
+		fi
+
+		mkdir -p "$DATADIR"
+
+		echo 'Initializing database'
+		mysql_install_db --datadir="$DATADIR" --rpm
+		echo 'Database initialized'
+
+		"$@" --skip-networking &
+		pid="$!"
+
+		mysql=( mysql --protocol=socket -uroot )
+
+		for i in {30..0}; do
+			if echo 'SELECT 1' | "${mysql[@]}" &> /dev/null; then
+				break
+			fi
+			echo 'MySQL init process in progress...'
+			sleep 1
+		done
+		if [ "$i" = 0 ]; then
+			echo >&2 'MySQL init process failed.'
+			exit 1
+		fi
+
+		if [ -z "$MYSQL_INITDB_SKIP_TZINFO" ]; then
+			# sed is for https://bugs.mysql.com/bug.php?id=20545
+			mysql_tzinfo_to_sql /usr/share/zoneinfo | sed 's/Local time zone must be set--see zic manual page/FCTY/' | "${mysql[@]}" mysql
+		fi
+
+		if [ ! -z "$MYSQL_RANDOM_ROOT_PASSWORD" ]; then
+			MYSQL_ROOT_PASSWORD="$(pwgen -1 32)"
+			echo "GENERATED ROOT PASSWORD: $MYSQL_ROOT_PASSWORD"
+		fi
+		"${mysql[@]}" <<-EOSQL
+			-- What's done in this file shouldn't be replicated
+			--  or products like mysql-fabric won't work
+			SET @@SESSION.SQL_LOG_BIN=0;
+
+			DELETE FROM mysql.user ;
+			CREATE USER 'root'@'%' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}' ;
+			GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION ;
+			DROP DATABASE IF EXISTS test ;
+			FLUSH PRIVILEGES ;
+		EOSQL
+
+		if [ ! -z "$MYSQL_ROOT_PASSWORD" ]; then
+			mysql+=( -p"${MYSQL_ROOT_PASSWORD}" )
+		fi
+
+		if [ "$MYSQL_DATABASE" ]; then
+			echo "CREATE DATABASE IF NOT EXISTS \`$MYSQL_DATABASE\` ;" | "${mysql[@]}"
+			mysql+=( "$MYSQL_DATABASE" )
+		fi
+
+		if [ "$MYSQL_USER" -a "$MYSQL_PASSWORD" ]; then
+			echo "CREATE USER '$MYSQL_USER'@'%' IDENTIFIED BY '$MYSQL_PASSWORD' ;" | "${mysql[@]}"
+
+			if [ "$MYSQL_DATABASE" ]; then
+				echo "GRANT ALL ON \`$MYSQL_DATABASE\`.* TO '$MYSQL_USER'@'%' ;" | "${mysql[@]}"
+			fi
+
+			echo 'FLUSH PRIVILEGES ;' | "${mysql[@]}"
+		fi
+
+                echo "STOP SLAVE;" | "${mysql[@]}"
+                echo "CHANGE MASTER TO master_host='$MYSQL_MASTER_SERVICE_HOST', master_user='$MYSQL_REPLICATION_USER', master_password='$MYSQL_REPLICATION_PASSWORD' ;" | "${mysql[@]}"
+                echo "START SLAVE;" | "${mysql[@]}"
+
+		echo
+		for f in /docker-entrypoint-initdb.d/*; do
+			case "$f" in
+				*.sh)     echo "$0: running $f"; . "$f" ;;
+				*.sql)    echo "$0: running $f"; "${mysql[@]}" < "$f"; echo ;;
+				*.sql.gz) echo "$0: running $f"; gunzip -c "$f" | "${mysql[@]}"; echo ;;
+				*)        echo "$0: ignoring $f" ;;
+			esac
+			echo
+		done
+
+		if ! kill -s TERM "$pid" || ! wait "$pid"; then
+			echo >&2 'MySQL init process failed.'
+			exit 1
+		fi
+
+		echo
+		echo 'MySQL init process done. Ready for start up.'
+		echo
+	fi
+fi
+
+exec "$@"
+
+
+
+[vagrant@kubeworker2 ~]$ cat Dockerfile 
+FROM mariadb:10.1.14
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN ln -sf usr/local/bin/docker-entrypoint.sh /docker-entrypoint.sh # backwards compat
+RUN chmod 775 /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["docker-entrypoint.sh"]
+EXPOSE 3306
+CMD ["mysqld"]
+
+
+[vagrant@kubeworker2 ~]$ docker build . -t ohyoungjooung2/mariadb:10.1.14-slave
+Sending build context to Docker daemon 16.38 kB
+Step 1/7 : FROM mariadb:10.1.14
+ ---> 0112f2662974
+Step 2/7 : COPY docker-entrypoint.sh /usr/local/bin/
+ ---> 1bcee307efdc
+Removing intermediate container 97a677c19755
+Step 3/7 : RUN ln -sf usr/local/bin/docker-entrypoint.sh /docker-entrypoint.sh # backwards compat
+ ---> Running in 71b5941b311d
+ ---> 2d4495d84835
+Removing intermediate container 71b5941b311d
+Step 4/7 : RUN chmod 775 /usr/local/bin/docker-entrypoint.sh
+ ---> Running in 2d1eae3e6552
+ ---> 7a8c6add86a1
+Removing intermediate container 2d1eae3e6552
+Step 5/7 : ENTRYPOINT docker-entrypoint.sh
+ ---> Running in 6edb0b26af64
+ ---> 82acf26c1b4b
+Removing intermediate container 6edb0b26af64
+Step 6/7 : EXPOSE 3306
+ ---> Running in d3a3ea12f89d
+ ---> 54080e986319
+Removing intermediate container d3a3ea12f89d
+Step 7/7 : CMD mysqld
+ ---> Running in 405c7be7ca20
+ ---> 69898201907d
+Removing intermediate container 405c7be7ca20
+Successfully built 69898201907d
+
+
+
+
+
+[vagrant@kubemaster mariadb_sv]$ cat kustomization.yaml 
+secretGenerator:
+- name: mariadb-pass
+  literals:
+  - password=StrongPass$^^$
+- name: mariadb-master-host
+  literals:
+  - mariadb-master-host=mariadb
+- name: rep-user
+  literals:
+  - rep-user=rep-user
+- name: rep-password
+  literals:
+  - rep-password=Good$^Password!
+resources:
+  - mariadb-slave.yaml
+
+
+
+
+# Must inspect some master jobs.
+
+# IN LIVE MODE.
+[vagrant@kubemaster mariadb]$ kb exec -it mariadb-0 bash
+root@mariadb-0:/# mysql -p
+Enter password: 
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 4
+Server version: 10.1.14-MariaDB-1~jessie mariadb.org binary distribution
+
+Copyright (c) 2000, 2016, Oracle, MariaDB Corporation Ab and others.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+MariaDB [(none)]> FLUSH TABLES WITH READ LOCK;
+Query OK, 0 rows affected (0.00 sec)
+
+ STATUS' at line 1
+MariaDB [(none)]> SHOW MASTER STATUS;
++--------------------+----------+--------------+------------------+
+| File               | Position | Binlog_Do_DB | Binlog_Ignore_DB |
++--------------------+----------+--------------+------------------+
+| master1-bin.000006 |      476 |              |                  |
++--------------------+----------+--------------+------------------+
+1 row in set (0.00 sec)
+
+
+
+[vagrant@kubemaster mariadb_sv]$ kb apply -k .
+secret/mariadb-master-host-7t8m8g92k6 created
+secret/mariadb-pass-hmt2hb8m6g unchanged
+secret/rep-password-8bhkm96dbt created
+secret/rep-user-bttd79k4t8 created
+statefulset.apps/mariadb-slave configured
+[vagrant@kubemaster mariadb_sv]$ kb get po
+NAME                         READY   STATUS    RESTARTS   AGE
+mariadb-0                    1/1     Running   1          12h
+mariadb-slave-0              1/1     Running   0          3s
+wordpress-77bd488d8b-2dtgb   1/1     Running   2          46h
+[vagrant@kubemaster mariadb_sv]$ 
+
+
+
+[vagrant@kubemaster mariadb_sv]$ kb describe po mariadb-slave-0
+Name:               mariadb-slave-0
+Namespace:          default
+Priority:           0
+PriorityClassName:  <none>
+Node:               kubeworker2/192.168.121.193
+Start Time:         Sun, 09 Jun 2019 11:37:42 +0000
+Labels:             app=mariadb-slave
+                    controller-revision-hash=mariadb-slave-69789d6746
+                    statefulset.kubernetes.io/pod-name=mariadb-slave-0
+Annotations:        <none>
+Status:             Running
+IP:                 10.244.2.9
+Controlled By:      StatefulSet/mariadb-slave
+Containers:
+  mariadb:
+    Container ID:   docker://ddbd9544c176900bb36815c51a9f393ff86d21a5cff1bf74e9014927bc97b47b
+    Image:          ohyoungjooung2/mariadb:10.1.14-slave
+    Image ID:       docker://sha256:69898201907d8b1ef61a9985f225b84e5c35776811e2a6045242d03391571c95
+    Port:           3306/TCP
+    Host Port:      0/TCP
+    State:          Running
+      Started:      Sun, 09 Jun 2019 11:37:44 +0000
+    Ready:          True
+    Restart Count:  0
+    Requests:
+      cpu:     500m
+      memory:  1Gi
+    Environment:
+      MYSQL_ROOT_PASSWORD:         <set to the key 'password' in secret 'mariadb-pass-hmt2hb8m6g'>                    Optional: false
+      MYSQL_MASTER_SERVICE_HOST:   <set to the key 'mariadb-master-host' in secret 'mariadb-master-host-7t8m8g92k6'>  Optional: false
+      MYSQL_REPLICATION_USER:      <set to the key 'rep-user' in secret 'rep-user-bttd79k4t8'>                        Optional: false
+      MYSQL_REPLICATION_PASSWORD:  <set to the key 'rep-password' in secret 'rep-password-8bhkm96dbt'>                Optional: false
+    Mounts:
+      /etc/mysql/conf.d from mariadb-slave-cnf (rw)
+      /var/lib/mysql from mariadb-slave (rw,path="mariadb-sv")
+      /var/run/secrets/kubernetes.io/serviceaccount from default-token-wxbxs (ro)
+Conditions:
+  Type              Status
+  Initialized       True 
+  Ready             True 
+  ContainersReady   True 
+  PodScheduled      True 
+Volumes:
+  mariadb-slave:
+    Type:       PersistentVolumeClaim (a reference to a PersistentVolumeClaim in the same namespace)
+    ClaimName:  mariadb-slave-mariadb-slave-0
+    ReadOnly:   false
+  mariadb-slave-cnf:
+    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Name:      mariadb-slave.cnf
+    Optional:  false
+  default-token-wxbxs:
+    Type:        Secret (a volume populated by a Secret)
+    SecretName:  default-token-wxbxs
+    Optional:    false
+QoS Class:       Burstable
+Node-Selectors:  <none>
+Tolerations:     node.kubernetes.io/not-ready:NoExecute for 300s
+                 node.kubernetes.io/unreachable:NoExecute for 300s
+Events:
+  Type    Reason     Age   From                  Message
+  ----    ------     ----  ----                  -------
+  Normal  Scheduled  59s   default-scheduler     Successfully assigned default/mariadb-slave-0 to kubeworker2
+  Normal  Pulled     57s   kubelet, kubeworker2  Container image "ohyoungjooung2/mariadb:10.1.14-slave" already present on machine
+  Normal  Created    57s   kubelet, kubeworker2  Created container mariadb
+  Normal  Started    57s   kubelet, kubeworker2  Started container mariadb
+
+
+
+
+
+[vagrant@kubemaster mariadb_sv]$ kb exec -it mariadb-slave-0 bash
+root@mariadb-slave-0:/# mysql -p
+Enter password: 
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 5
+
+MariaDB [(none)]> STOP SLAVE;
+
+
+MariaDB [(none)]> SET GLOBAL SQL_SLAVE_SKIP_COUNTER = 1;
+Query OK, 0 rows affected (0.00 sec)
+
+MariaDB [(none)]> START SLAVE;
+Query OK, 0 rows affected (0.01 sec)
+
+MariaDB [(none)]> select sleep(8);
+SHOW SLAVE STATUS\G
++----------+
+| sleep(8) |
++----------+
+|        0 |
++----------+
+1 row in set (8.00 sec)
+
+MariaDB [(none)]> SHOW SLAVE STATUS\G
+*************************** 1. row ***************************
+               Slave_IO_State: Waiting for master to send event
+                  Master_Host: mariadb
+                  Master_User: rep-user
+                  Master_Port: 3306
+                Connect_Retry: 60
+              Master_Log_File: master1-bin.000005
+          Read_Master_Log_Pos: 796410
+               Relay_Log_File: slave2-relay-bin.000007
+                Relay_Log_Pos: 1794594
+        Relay_Master_Log_File: master1-bin.000004
+             Slave_IO_Running: Yes
+            Slave_SQL_Running: Yes
+              Replicate_Do_DB: 
+          Replicate_Ignore_DB: 
+           Replicate_Do_Table: 
+       Replicate_Ignore_Table: 
+      Replicate_Wild_Do_Table: 
+  Replicate_Wild_Ignore_Table: 
+                   Last_Errno: 0
+                   Last_Error: 
+                 Skip_Counter: 0
+          Exec_Master_Log_Pos: 1794304
+              Relay_Log_Space: 7160013
+              Until_Condition: None
+               Until_Log_File: 
+                Until_Log_Pos: 0
+           Master_SSL_Allowed: No
+           Master_SSL_CA_File: 
+           Master_SSL_CA_Path: 
+              Master_SSL_Cert: 
+            Master_SSL_Cipher: 
+               Master_SSL_Key: 
+        Seconds_Behind_Master: 1821
+Master_SSL_Verify_Server_Cert: No
+                Last_IO_Errno: 0
+                Last_IO_Error: 
+               Last_SQL_Errno: 0
+               Last_SQL_Error: 
+  Replicate_Ignore_Server_Ids: 
+             Master_Server_Id: 1
+               Master_SSL_Crl: 
+           Master_SSL_Crlpath: 
+                   Using_Gtid: No
+                  Gtid_IO_Pos: 
+      Replicate_Do_Domain_Ids: 
+  Replicate_Ignore_Domain_Ids: 
+                Parallel_Mode: conservative
+1 row in set (0.00 sec)
+
+
+
+  Slave_IO_Running: Yes
+            Slave_SQL_Running: Yes
+
+
+ABOVE YESES IS TELLING THAT REPLICATION IS WORKING OK.
 
 
 
