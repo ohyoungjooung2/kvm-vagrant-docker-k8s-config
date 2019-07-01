@@ -1,0 +1,307 @@
+mariadb master slave(2 containers) k8s configuration.
+Using local disk provisions.
+
+
+
+--Disk provisioning. Dev env. Using kubeworker1 only. In production this is not goob but dev mode very ok.--
+
+[root@kubeworker1 ~]# mkdir /master
+[root@kubeworker1 ~]# mkdir /slave1
+[root@kubeworker1 ~]# mkdir /slave2
+[root@kubeworker1 ~]# cat /etc/fstab
+
+#
+# /etc/fstab
+# Created by anaconda on Sat May 12 18:50:26 2018
+#
+# Accessible filesystems, by reference, are maintained under '/dev/disk'
+# See man pages fstab(5), findfs(8), mount(8) and/or blkid(8) for more info
+#
+/dev/mapper/VolGroup00-LogVol00 /                       xfs     defaults        0 0
+UUID=570897ca-e759-4c81-90cf-389da6eee4cc /boot                   xfs     defaults        0 0
+#/dev/mapper/VolGroup00-LogVol01 swap                    swap    defaults        0 0
+/dev/vdb                         /master                 ext4    defaults        0 0 
+/dev/vdc                         /slave1                 ext4    defaults        0 0 
+/dev/vdd                         /slave2                 ext4    defaults        0 0 
+
+
+
+[root@kubeworker1 ~]# mkfs.ext4 /dev/vdb
+[root@kubeworker1 ~]# mkfs.ext4 /dev/vdc
+[root@kubeworker1 ~]# mkfs.ext4 /dev/vdd
+
+
+[root@kubeworker1 ~]# mount /dev/vdb /master/
+[root@kubeworker1 ~]# mount /dev/vdc /slave1/
+[root@kubeworker1 ~]# mount /dev/vdd /slave2/
+
+
+[root@kubeworker1 ~]# df -h | grep sla
+/dev/vdc                         2.9G  9.0M  2.8G   1% /slave1
+/dev/vdd                         2.9G  9.0M  2.8G   1% /slave2
+[root@kubeworker1 ~]# df -h | grep mas
+/dev/vdb                         2.9G  9.0M  2.8G   1% /master
+[root@kubeworker1 ~]# 
+
+[vagrant@kubemaster ~]$ vi mariadb-master-sc.yaml 
+
+
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: mariadb-master-sc
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+                                                                                                                                                                                                  
+      
+
+[vagrant@kubemaster ~]$ alias | grep kubectl
+alias kb='kubectl'
+
+[vagrant@kubemaster ~]$ kb create -f mariadb-master-sc.yaml 
+storageclass.storage.k8s.io/mariadb-master-sc created
+
+
+[vagrant@kubemaster ~]$ kb get sc | grep master
+mariadb-master-sc   kubernetes.io/no-provisioner   64s
+[vagrant@kubemaster ~]$ 
+
+
+
+#Create master mariadb disk pv
+[vagrant@kubemaster ~]$ vi mariadb-master-pv.yaml
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mariadb-master-disk
+spec:
+  capacity:
+    storage: 3Gi
+  # volumeMode field requires BlockVolume Alpha feature gate to be enabled.
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: mariadb-master-sc
+  local:
+    path: /master
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker1
+
+
+[vagrant@kubemaster ~]$ kb get pv | grep master
+mariadb-master-disk   3Gi       RWO            Recycle          Available                                           mariadb-master-sc            8s
+
+
+
+#Create mariadb master sts(stateful) pod(1 replica only, cause replica mode usually master is only one node)
+
+[vagrant@kubemaster mariadb]$ vi mariadb-master.yaml 
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mariadb-master
+spec:
+  selector:
+    matchLabels:
+      app: mariadb-master
+  serviceName: mariadb-master
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: mariadb-master
+    spec:
+      containers:
+      - name: mariadb-master
+        #image: mariadb:10.1.14
+        image: ohyoungjooung2/mariadb:10.1.14-master
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+               name: mariadb-pass
+               key: password
+        - name: MYSQL_REPLICATION_USER
+          value: "rep-user"
+        - name: MYSQL_REPLICATION_PASSWORD
+          value: "Good$^Password!"         
+        ports:
+        - name: mariadb-master
+          containerPort: 3306
+        volumeMounts:
+        - name: mariadb-master-st
+          mountPath: /var/lib/mysql
+          subPath: mariadb
+        - name: mariadb-master-cnf
+          mountPath: /etc/mysql/conf.d
+
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+    
+        livenessProbe:
+          exec:
+            command: ["mysqladmin", "ping"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            # Check we can execute queries over TCP (skip-networking is off).
+            command: ["mysql", "-h", "127.0.0.1", "-e", "SELECT 1"]
+          initialDelaySeconds: 5
+          periodSeconds: 2
+          timeoutSeconds: 1
+
+      volumes:
+      - name: mariadb-master-cnf
+        configMap:
+          name: mariadb-master.cnf
+
+        
+       
+  volumeClaimTemplates:
+  - metadata:
+      name: mariadb-master-st
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "mariadb-master-sc"
+      resources:
+        requests:
+          storage: 3Gi
+
+        
+
+[vagrant@kubemaster mariadb]$ vi kustomization.yaml 
+secretGenerator:
+- name: mariadb-pass
+  literals:
+  - password=StrongPass$^^$
+resources:
+  - mariadb-master.yaml
+
+
+[vagrant@kubemaster mariadb]$ kb apply -k .
+secret/mariadb-pass-hmt2hb8m6g created
+statefulset.apps/mariadb-master created
+[vagrant@kubemaster mariadb]$ 
+
+
+
+[vagrant@kubemaster mariadb]$ kb get po -l app=mariadb-master
+NAME               READY   STATUS    RESTARTS   AGE
+mariadb-master-0   1/1     Running   0          105s
+
+
+
+
+[vagrant@kubemaster mariadb]$ kb exec -it mariadb-master-0 bash
+root@mariadb-master-0:/# ls
+bin  boot  core  dev  docker-entrypoint-initdb.d  docker-entrypoint.sh	etc  home  lib	lib64  media  mnt  opt	proc  root  run  sbin  srv  sys  tmp  usr  var
+root@mariadb-master-0:/# ps aux
+USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+mysql        1  1.2  6.3 942920 119816 ?       Ssl  18:26   0:02 mysqld
+root        50  0.0  0.1  20240  1920 ?        Ss   18:29   0:00 bash
+root        55  0.0  0.0  17488  1148 ?        R+   18:29   0:00 ps aux
+
+
+
+
+--master is ok---
+Slave start 
+slave1)#Caution!==In real production these two disks must be another host from each hosts(master mariadb also included)
+[vagrant@kubeworker1 ~]$ df -h | grep slave
+/dev/vdc                         2.9G  9.0M  2.8G   1% /slave1
+/dev/vdd                         2.9G  9.0M  2.8G   1% /slave2
+
+
+[vagrant@kubemaster ~]$ cat slave-mariadb-pv.yaml 
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: slave-mariadb-pv1
+spec:
+  capacity:
+    storage: 3Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: mariadb-slave-sc
+  local:
+    path: /slave1
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker1
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: slave-mariadb-pv2
+spec:
+  capacity:
+    storage: 3Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: mariadb-slave-sc
+  local:
+    path: /slave2
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker1
+
+
+[vagrant@kubemaster ~]$ kb create -f slave-mariadb-pv.yaml 
+persistentvolume/slave-mariadb-pv1 created
+persistentvolume/slave-mariadb-pv2 created
+
+
+
+[vagrant@kubemaster ~]$ kb get pv | grep slave
+slave-mariadb-pv1     3Gi        RWO            Delete           Available                                                mariadb-slave-sc             25s
+slave-mariadb-pv2     3Gi        RWO            Delete           Available                                                mariadb-slave-sc             25s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                 
+
