@@ -1,0 +1,438 @@
+#Just testing and studying. This is not for production but adjustable when we have actual produciton-ready 
+enrivonment such as lots of good local hard disks or SAN(attached storage with GIGABYTE WIDE LAN).
+
+[root@kubeworker2 ~]# df -h | grep local
+/dev/vdb                         976M  2.6M  907M   1% /local1
+/dev/vdc                         976M  2.6M  907M   1% /local2
+/dev/vdd                         976M  2.6M  907M   1% /local3
+
+
+[vagrant@kubemaster ststest]$ cat st.yaml 
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: local-storage
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+[vagrant@kubemaster ststest]$ kb create -f st.yaml 
+
+
+
+[vagrant@kubemaster ststest]$ kb get sc
+NAME                PROVISIONER                    AGE
+local-storage       kubernetes.io/no-provisioner   14m
+
+
+
+
+
+[vagrant@kubemaster ststest]$ cat pv.yaml 
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv1
+spec:
+  capacity:
+    storage: 1Gi
+  # volumeMode field requires BlockVolume Alpha feature gate to be enabled.
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: local-storage
+  local:
+    path: /local1
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker2
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv2
+spec:
+  capacity:
+    storage: 1Gi
+  # volumeMode field requires BlockVolume Alpha feature gate to be enabled.
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: local-storage
+  local:
+    path: /local2
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker2
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv3
+spec:
+  capacity:
+    storage: 1Gi
+  # volumeMode field requires BlockVolume Alpha feature gate to be enabled.
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: local-storage
+  local:
+    path: /local3
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker2
+
+
+
+
+[vagrant@kubemaster ststest]$ kb create -f pv.yaml 
+persistentvolume/local-pv1 created
+persistentvolume/local-pv2 created
+persistentvolume/local-pv3 created
+[vagrant@kubemaster ststest]$ kb get pv | grep "^local"
+local-pv1          1Gi        RWO            Delete           Available                                           local-storage                9s
+local-pv2          1Gi        RWO            Delete           Available                                           local-storage                9s
+local-pv3          1Gi        RWO            Delete           Available                                           local-storage                9s
+[vagrant@kubemaster ststest]$ 
+
+[vagrant@kubemaster ststest]$ kb create -f test-svc.yaml 
+service/local-service created
+[vagrant@kubemaster ststest]$ cat test-svc.yaml 
+apiVersion: v1
+kind: Service
+metadata:
+  name: local-service
+  labels:
+    app: local-service
+spec:
+  clusterIP: None
+  selector:
+    app: local-service
+
+
+[vagrant@kubemaster ststest]$ kb create -f test-svc.yaml 
+service/local-service created
+
+
+[vagrant@kubemaster ststest]$ cat test-sts-rs.yaml 
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: local-test
+spec:
+  serviceName: "local-service"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: local-test
+  template:
+    metadata:
+      labels:
+        app: local-test
+    spec:
+      containers:
+      - name: test-container
+        image: k8s.gcr.io/busybox
+        command:
+        - "/bin/sh"
+        args:
+        - "-c"
+        - "sleep 100000"
+        volumeMounts:
+        - name: local-vol
+          mountPath: /usr/test-pod
+  volumeClaimTemplates:
+  - metadata:
+      name: local-vol
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "local-storage"
+      resources:
+        requests:
+          storage: 1G
+
+
+
+
+[vagrant@kubemaster ststest]$ kb create -f test-sts-rs.yaml 
+statefulset.apps/local-test created
+[vagrant@kubemaster ststest]$ kb get po
+NAME           READY   STATUS              RESTARTS   AGE
+local-test-0   0/1     ContainerCreating   0          2s
+[vagrant@kubemaster ststest]$ 
+
+
+
+
+[vagrant@kubemaster ststest]$ kb get po
+NAME           READY   STATUS    RESTARTS   AGE
+local-test-0   1/1     Running   0          15s
+local-test-1   1/1     Running   0          11s
+local-test-2   1/1     Running   0          8s
+
+
+
+[vagrant@kubemaster ststest]$ kb get pvc
+NAME                            STATUS   VOLUME             CAPACITY   ACCESS MODES   STORAGECLASS        AGE
+local-pv-local-test-0           Bound    local-pv1          1Gi        RWO            local-storage       35s
+local-pv-local-test-1           Bound    local-pv2          1Gi        RWO            local-storage       31s
+local-pv-local-test-2           Bound    local-pv3          1Gi        RWO            local-storage       28s
+
+
+
+2. kubia k8s in action example test with local disk provisioner.
+  persistentVolumeReclaimPolicy: Recycle => changed
+  [vagrant@kubemaster ststest]$ kb create -f pv.yaml 
+persistentvolume/local-pv1 created
+persistentvolume/local-pv2 created
+persistentvolume/local-pv3 created
+[vagrant@kubemaster ststest]$ cat pv.yaml 
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv1
+spec:
+  capacity:
+    storage: 1Gi
+  # volumeMode field requires BlockVolume Alpha feature gate to be enabled.
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: local-storage
+  local:
+    path: /local1
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker2
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv2
+spec:
+  capacity:
+    storage: 1Gi
+  # volumeMode field requires BlockVolume Alpha feature gate to be enabled.
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: local-storage
+  local:
+    path: /local2
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker2
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv3
+spec:
+  capacity:
+    storage: 1Gi
+  # volumeMode field requires BlockVolume Alpha feature gate to be enabled.
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: local-storage
+  local:
+    path: /local3
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker2
+
+
+
+
+
+[vagrant@kubemaster ststest]$ cat kubia-svc.yaml 
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubia
+spec:
+  selector:
+    app: kubia
+  type: NodePort
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      nodePort: 32335
+      protocol: TCP
+
+
+
+
+
+[vagrant@kubemaster ststest]$ cat kubia-sts.yaml 
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kubia
+spec:
+  serviceName: kubia
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kubia
+  template:
+    metadata:
+      labels:
+        app: kubia
+    spec:
+      containers:
+      - name: kubia
+        image: luksa/kubia-pet
+        ports:
+        - name: http
+          containerPort: 8080
+        volumeMounts:
+        - name: local-pv
+          mountPath: /var/data
+  volumeClaimTemplates:
+  - metadata:
+      name: local-pv
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: local-storage
+      resources:
+        requests:
+          storage: 1G
+
+
+
+
+[vagrant@kubemaster ststest]$ kb create -f kubia-sts.yaml 
+statefulset.apps/kubia created
+[vagrant@kubemaster ststest]$ kb get po
+NAME      READY   STATUS              RESTARTS   AGE
+kubia-0   0/1     ContainerCreating   0          2s
+
+
+
+[vagrant@kubemaster ststest]$ kb get po
+NAME      READY   STATUS    RESTARTS   AGE
+kubia-0   1/1     Running   0          17s
+kubia-1   1/1     Running   0          12s
+kubia-2   1/1     Running   0          7s
+
+[vagrant@kubemaster ststest]$ kubectl proxy
+Starting to serve on 127.0.0.1:8001
+
+
+
+[vagrant@kubemaster ~]$ curl localhost:8001/api/v1/namespaces/default/pods/kubia-0/proxy/
+You've hit kubia-0
+Data stored on this pod: No data posted yet
+
+
+[vagrant@kubemaster ~]$ curl http://10.244.2.49:8080
+You've hit kubia-0
+Data stored on this pod: No data posted yet
+[vagrant@kubemaster ~]$ kb describe po kubia-1 | grep "IP"
+IP:                 10.244.2.50
+[vagrant@kubemaster ~]$ curl http://10.244.2.50:8080
+You've hit kubia-1
+Data stored on this pod: No data posted yet
+[vagrant@kubemaster ~]$ curl http://10.244.2.51:8080
+You've hit kubia-2
+Data stored on this pod: No data posted yet
+
+
+
+[vagrant@kubemaster ~]$ curl -X POST -d "Hey there! This greeting was submitted to kubia-0." localhost:8001/api/v1/namespaces/default/pods/kubia-0/proxy/
+Data stored on pod kubia-0
+
+
+[vagrant@kubemaster ~]$ curl http://10.244.2.49:8080
+You've hit kubia-0
+Data stored on this pod: Hey there! This greeting was submitted to kubia-0.
+
+
+[vagrant@kubemaster ~]$ curl http://10.244.2.50:8080
+You've hit kubia-1
+Data stored on this pod: No data posted yet
+[vagrant@kubemaster ~]$ curl http://10.244.2.51:8080
+You've hit kubia-2
+Data stored on this pod: No data posted yet
+
+
+#Only kubia-0 only posted with data.
+[vagrant@kubemaster ~]$ kb delete po kubia-0
+pod "kubia-0" deleted
+[vagrant@kubemaster ~]$ 
+
+#With same name, it revives.
+[vagrant@kubemaster ststest]$ kb get po
+NAME      READY   STATUS    RESTARTS   AGE
+kubia-0   1/1     Running   0          10s
+
+
+#Well ip changed but data,hostname,and storage is same.
+[vagrant@kubemaster ~]$ kb describe po kubia-0 | grep IP
+IP:                 10.244.2.52
+[vagrant@kubemaster ~]$ curl http://10.244.2.52:8080
+You've hit kubia-0
+Data stored on this pod: Hey there! This greeting was submitted to kubia-0.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

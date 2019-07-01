@@ -1,0 +1,208 @@
+
+1) Mysql replication sts with local disk provision.
+
+1. prepare disks(1gb) per each nodes(3nodes as a dev)
+
+[root@kubeworker1 ~]# df -h | grep mysql
+/dev/vde                         976M  2.6M  907M   1% /mysql
+[root@kubeworker1 ~]# 
+
+
+
+[root@kubeworker2 ~]# df -h | grep slave1
+/dev/vde                         976M  2.6M  907M   1% /mysql
+
+
+[root@kubeworker3 ~]# df -h | grep slave2 | grep vdc
+/dev/vdc                         976M  2.6M  907M   1% /mysql
+
+2. Prepare sc(storage class ) and pv.
+[vagrant@kubemaster mysql]$ cat mysql-sc.yaml 
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: mysql-sc
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+[vagrant@kubemaster mysql]$ kb create -f mysql-sc.yaml 
+storageclass.storage.k8s.io/mysql-sc created
+[vagrant@kubemaster mysql]$ kb get sc mysql-sc
+NAME       PROVISIONER                    AGE
+mysql-sc   kubernetes.io/no-provisioner   6s
+[vagrant@kubemaster mysql]$ 
+
+3. Prepare pvs.
+[vagrant@kubemaster mysql]$ cat mysql-pv.yaml 
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysql-pv1
+spec:
+  capacity:
+    storage: 1Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: mysql-sc
+  local:
+    path: /mysql
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker1
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysql-pv2
+spec:
+  capacity:
+    storage: 1Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: mysql-sc
+  local:
+    path: /mysql
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker2
+---
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysql-pv3
+spec:
+  capacity:
+    storage: 1Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: mysql-sc
+  local:
+    path: /mysql
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - kubeworker3
+[vagrant@kubemaster mysql]$ kb create -f mysql-pv.yaml 
+persistentvolume/mysql-pv1 created
+persistentvolume/mysql-pv2 created
+persistentvolume/mysql-pv3 created
+[vagrant@kubemaster mysql]$ kb get pv | grep mysql-pv
+mysql-pv1             1Gi        RWO            Recycle          Available                                                mysql-sc                     8s
+mysql-pv2             1Gi        RWO            Recycle          Available                                                mysql-sc                     8s
+mysql-pv3             1Gi        RWO            Recycle          Available                                                mysql-sc                     8s
+[vagrant@kubemaster mysql]$ 
+
+
+!Now I did ready pvs for mysql replication!
+
+
+3) Prepare configmap and svc(service)
+[vagrant@kubemaster mysql]$ vi mysql-configmap.yaml
+[vagrant@kubemaster mysql]$ cat mysql-configmap.yaml 
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+data:
+  master.cnf: |
+    # Apply this config only on the master.
+    [mysqld]
+    log-bin
+  slave.cnf: |
+    # Apply this config only on slaves.
+    [mysqld]
+    super-read-only
+
+#https://kubernetes.io/docs/tasks/run-application/run-replicated-stateful-application/
+[vagrant@kubemaster mysql]$ kb create -f mysql-configmap.yaml 
+configmap/mysql created
+
+
+
+[vagrant@kubemaster mysql]$ vi mysql-svc.yaml
+[vagrant@kubemaster mysql]$ cat mysql-svc.yaml 
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+spec:
+  ports:
+  - name: mysql
+    port: 3306
+  clusterIP: None
+  selector:
+    app: mysql
+---
+# Client service for connecting to any MySQL instance for reads.
+# For writes, you must instead connect to the master: mysql-0.mysql.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-read
+  labels:
+    app: mysql
+spec:
+  ports:
+  - name: mysql
+    port: 3306
+  selector:
+    app: mysql
+[vagrant@kubemaster mysql]$ kb create -f mysql-svc.yaml 
+service/mysql created
+service/mysql-read created
+
+
+[vagrant@kubemaster mysql]$ vi mysql-sts.yaml
+
+[vagrant@kubemaster mysql]$ kb create -f mysql-sts.yaml 
+
+
+
+NAME                         READY   STATUS     RESTARTS   AGE
+mysql-0                      2/2     Running    0          2m54s
+mysql-1                      0/2     Init:1/2   0          11s
+
+
+
+[vagrant@kubemaster mysql]$ kb get po
+NAME                         READY   STATUS     RESTARTS   AGE
+mysql-0                      2/2     Running    0          3m37s
+mysql-1                      2/2     Running    0          54s
+mysql-2                      0/2     Init:0/2   0          14s
+
+
+[vagrant@kubemaster mysql]$ kb get po
+NAME                         READY   STATUS    RESTARTS   AGE
+mysql-0                      2/2     Running   0          5m37s
+mysql-1                      2/2     Running   0          2m54s
+mysql-2                      2/2     Running   0          2m14s
+
+
+
+
+
+
